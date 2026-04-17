@@ -1,43 +1,75 @@
-%Add shortcuts to matlab for loading, opening, and managing editor
-%sessions. Also optionally copies needed files to userpath for opening
-%sessions right when matlab is opened without changing the path.
-%
-%Make sure this file is on the path before running it!
+% --- EditorManager Shortcut Creator ---
+% This script creates shortcuts for Save, Open, and Manage sessions.
+% It handles both legacy Java shortcuts and modern Toolstrip Favorites.
 
-disp('Make sure to place the editorLayout package on the user path (a path')
-disp(' that will be available when first opening matlab, otherwise the ')
-disp(' shortcuts will not work. ')
-disp('You can run editorLayout.copyFilesToUserPath to do this automatically if you want.')
+% 1. Setup Data
+newClassName = 'EditorManager';
 
-shortcutNames = {
-    editorLayout.SessionEditor.shortcutSave;
-    editorLayout.SessionEditor.shortcutOpen;
-    editorLayout.SessionEditor.shortcutManageSessions};
-shortcutCategoryName = editorLayout.SessionEditor.shortcutCategory;
-shortcutCallbacks = {
-    'editorLayout.SessionEditor.saveSession()';
-    'editorLayout.SessionEditor.openSession()';
-    'editorLayout.SessionEditor.manageSessions()'};
+% Pull metadata from the class properties we defined earlier
+sCategory = EditorManager.shortcutCategory;
+sNames = {
+    EditorManager.shortcutSave;
+    EditorManager.shortcutOpen;
+    EditorManager.shortcutManageSessions};
 
-shortcutsJava = com.mathworks.mlwidgets.shortcuts.ShortcutUtils.getShortcutsByCategory(shortcutCategoryName);
-if isempty(shortcutsJava)
-    shortcuts = {};
+sCallbacks = {
+    'EditorManager.saveSession()';
+    'EditorManager.openSession()';
+    'EditorManager.manageSessions()'};
+
+% Check if we are in the modern Web Desktop
+hApp = matlab.ui.container.internal.RootApp.getInstance();
+
+if isempty(hApp)
+    % --- LEGACY JAVA PATH ---
+    % This handles the old "Shortcuts" bar in R2024b and earlier.
+    
+    import com.mathworks.mlwidgets.shortcuts.ShortcutUtils;
+    
+    shortcutsJava = ShortcutUtils.getShortcutsByCategory(sCategory);
+    existingNames = {};
+    if ~isempty(shortcutsJava)
+        for i = 0:shortcutsJava.size()-1
+            existingNames{end+1} = char(shortcutsJava.elementAt(i).getLabel()); %#ok<AGROW>
+        end
+    end
+
+    for i = 1:length(sNames)
+        matchIdx = find(strcmp(sNames{i}, existingNames), 1);
+        if ~isempty(matchIdx)
+            % Update existing
+            icon = shortcutsJava.elementAt(matchIdx-1).getIconPath();
+            awtinvoke(ShortcutUtils, 'editShortcut', ...
+                sNames{i}, sCategory, sNames{i}, sCategory, sCallbacks{i}, icon, 'true');
+        else
+            % Add new
+            awtinvoke(ShortcutUtils, 'addShortcutToBottom', ...
+                sNames{i}, sCallbacks{i}, [], sCategory, 'true');
+        end
+    end
+    fprintf('Java shortcuts added to the "%s" category.\n', sCategory);
+
 else
-    shortcuts = cell(shortcutsJava.size(),1);
-end
-for i=1:length(shortcuts)
-    shortcuts{i} = char(shortcutsJava.elementAt(i-1));
-end
-for i=1:length(shortcutNames)
-    if any(strcmp(shortcutNames{i},shortcuts))
-        icon = shortcutsJava.elementAt(i-1).getIconPath;%preserve previous icon if customized. Don't do [] as this will put no icon instead of 'Standard icon'.
-        editable = 'true';
-        awtinvoke(com.mathworks.mlwidgets.shortcuts.ShortcutUtils,'editShortcut', shortcutNames{i}, shortcutCategoryName, shortcutNames{i}, shortcutCategoryName, shortcutCallbacks{i},icon,editable);
-    else
-        icon = [];% This becomes 'Standard icon'
-        editable = 'true';
-        awtinvoke(com.mathworks.mlwidgets.shortcuts.ShortcutUtils,'addShortcutToBottom', shortcutNames{i}, shortcutCallbacks{i}, icon, shortcutCategoryName, editable);
+    % --- MODERN R2026a PATH ---
+    % In the Web Desktop, "Shortcuts" have been replaced by "Favorites".
+    % There isn't currently a public Java-free API to programmatically 
+    % inject buttons into the Toolstrip, so we use the Favorites mechanism.
+    
+    fprintf('Modern Desktop detected.\n');
+    fprintf('Note: Programmatic Toolstrip injection is restricted in R2026a.\n');
+    fprintf('Please add these to your "Favorites" gallery manually for the best experience:\n\n');
+    
+    for i = 1:length(sNames)
+        fprintf('  [%d] Label: %s\n', i, sNames{i});
+        fprintf('      Code:  %s\n\n', sCallbacks{i});
+    end
+    
+    % Optional: Open the Favorites editor for the user
+    try
+        com.mathworks.mde.favorites.FavoritesBrowser.getInstance().showBrowser();
+    catch
+        % Browser not available or different API
     end
 end
 
-disp('Shortcuts added successfully');
+disp('Shortcut setup process complete.');

@@ -1,124 +1,98 @@
-function indexFound = chooseOption(T, dialogueInterface, TParent) %answerRetriever can be a text input/output, or gui interface!
-%chooseOption will return a valid row of a Table according to user input.
-%
-% Usage:
-%    index = chooseOption(T)
-%    index = chooseOption(T,dialogueInterface)
-%
-% Example:
-%    index=(1:5)';% Must be a column vector
-%    name = {'abcd'
-%
-% T: a table that must have the variables index, and name. Other variables
-%   in the table are displayed, but not otherwise used.
-%
-% dialogueInterface: an optional struct or object that implements the
-%   following functions for interacting with a user (defaults and usage are
-%   shown):
-%     dialogueInterface.displayTable = @disp;
-%       dialogueInterface.displayTable(T);
-%
-%     dialogueInterface.requestInput = @(s) input(s,'s');
-%      answerString = dialogueInterface.requestInput('Enter something...');
-%
-%     dialogueInterface.displayText = @disp;
-%       dialogueInterface.displayText('Text to display');
-%
-%
-% A user may enter either a table index or name for selecting the row.
-% Names matches are attempted in order by 1) an exact match including case,
-% 2) exact case insensitive match, 3) partical case sensitive match, 4)
-% partial, case insensitive match. If any result has more than one match
-% when searching for a name, then the table will be filtered and input
-% requested again. If at any time a selection is invalid, an answer will be
-% requested again. The user can cancel the selection by pressing enter
-% without typing anything which will return an empty vector [].
-%
-% Indices need not be unique, since the value only need exist to be
-% returned.
+function indexFound = chooseOption(T, dialogueInterface, TParent)
+% CHOOSEOPTION Returns a valid row index from a table based on user input.
+% Supports fuzzy name matching and index selection.
 
-if nargin<3
+if nargin < 3
     TParent = [];
 end
-if nargin<2
+
+% Default interface uses Command Window (standard for R2026a)
+if nargin < 2 || isempty(dialogueInterface)
     dialogueInterface.displayTable = @disp;
-    dialogueInterface.requestInput = @(s) input(s,'s');
-    dialogueInterface.displayText = @disp;
+    dialogueInterface.requestInput = @(s) input(s, 's');
+    dialogueInterface.displayText  = @disp;
 end
 
 checkTCompatible(T);
 isSubSelection = ~isempty(TParent);
 
+% Show the user the available options
 dialogueInterface.displayTable(T);
 
-indexToLoad = dialogueInterface.requestInput ( 'Please enter option index or name (hit enter without entering anything to cancel):' );
-if isempty(indexToLoad)
+userInput = dialogueInterface.requestInput('Please enter option index or name (Press Enter to cancel): ');
+
+% Handle Cancellation
+if isempty(userInput)
     if isSubSelection
-        indexFound = chooseOption(TParent,dialogueInterface);
+        indexFound = chooseOption(TParent, dialogueInterface);
     else
         indexFound = [];
     end
     return;
 end
 
-indexFound = str2num(indexToLoad);
-if isempty(indexFound)
-    compareFunctions = {@strcmp,@strcmpi,@strncmp,@strncmpi};
+% Check if input is a numeric index
+indexFound = str2double(userInput); % str2double is safer than str2num
+
+if isnan(indexFound)
+    % It's a string name - perform Fuzzy Match
+    % Order: Exact -> Case-Insensitive -> Partial -> Partial Case-Insensitive
+    compareFunctions = {@strcmp, @strcmpi, @(s, n) strncmp(s, n, length(s)), @(s, n) strncmpi(s, n, length(s))};
     indexMatched = false;
-    indexFound = 0;
     attempt = 1;
-    while ~indexMatched%any(indexFound) && ~isempty(indexFound)
-        if attempt <=2
-            indexFound = compareFunctions{attempt}(indexToLoad,T.name);
-        elseif attempt <=4
-            indexFound = compareFunctions{attempt}(indexToLoad,T.name,length(indexToLoad));
+    
+    while ~indexMatched
+        if attempt <= 4
+            % Extract the comparison logic
+            logicalMatch = compareFunctions{attempt}(userInput, T.name);
+            
+            if any(logicalMatch)
+                if sum(logicalMatch) > 1
+                    % Ambiguous match - filter table and ask again
+                    dialogueInterface.displayText('Multiple names matched. Please refine selection:');
+                    indexFound = chooseOption(T(logicalMatch, :), dialogueInterface, T);
+                    indexMatched = true;
+                else
+                    % Unique match found
+                    indexFound = T.index(logicalMatch);
+                    indexMatched = true;
+                end
+            else
+                attempt = attempt + 1;
+            end
         else
-            dialogueInterface.displayText('Can not find a option name that matches, Please try again');
-            indexFound = chooseOption(T,dialogueInterface);
+            % No matches found at any level
+            dialogueInterface.displayText(['No match found for "', userInput, '". Please try again.']);
+            indexFound = chooseOption(T, dialogueInterface, TParent);
             break;
-        end
-        
-        if ~any(indexFound)
-            attempt = attempt +1;
-        elseif sum(indexFound)>1
-            dialogueInterface.displayText('More than one name matched (use an index if names are identical):');
-            indexFound = chooseOption(T(find(indexFound),:),dialogueInterface,T);
-            indexMatched = true;
-        else
-            indexFound = T.index(indexFound);
-            indexMatched = true;
         end
     end
 end
 
-
-
+% Post-Selection Validation
 if isSubSelection
     if isempty(indexFound)
-        indexFound = chooseOption(TParent,dialogueInterface);
+        indexFound = chooseOption(TParent, dialogueInterface);
     elseif ~any(indexFound == T.index)
-        dialogueInterface.displayText([ num2str(indexFound) ' is not one of the included indices. Please try again, or press enter to go up a level.']);
-        indexFound = chooseOption(T,dialogueInterface,TParent);
+        dialogueInterface.displayText([num2str(indexFound) ' is not in the sub-selection. Try again.']);
+        indexFound = chooseOption(T, dialogueInterface, TParent);
     end
-elseif isempty(indexFound)
-    return;
 else
-    nonMatch=0;
-    for i=1:length(indexFound)
-        if ~any(indexFound(i) == T.index);
-            nonMatch = i;
-            break;
+    % Final check: ensure the resulting indices actually exist in the table
+    if ~isempty(indexFound)
+        isValid = ismember(indexFound, T.index);
+        if ~all(isValid)
+            dialogueInterface.displayText('One or more indices are invalid. Please try again.');
+            indexFound = chooseOption(T, dialogueInterface);
         end
-    end
-    if nonMatch>0
-        dialogueInterface.displayText([ num2str(nonMatch) ' is not one of the included indices. Please try again.']);
-        indexFound = chooseOption(T,dialogueInterface);
     end
 end
 
-    function checkTCompatible(T)
-        varName = T.Properties.VariableNames;
-        assert(any(strcmp('index',varName)),'"index" must be a variable in table T.')
-        assert(any(strcmp('name',varName)),'"name" must be a variable in table T.')
+    % Nested validation function
+    function checkTCompatible(tab)
+        vars = tab.Properties.VariableNames;
+        if ~any(strcmp('index', vars)) || ~any(strcmp('name', vars))
+            error('chooseOption:InvalidTable', 'Table must contain "index" and "name" columns.');
+        end
     end
 end
