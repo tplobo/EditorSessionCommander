@@ -1,21 +1,21 @@
-% --- EditorManager Shortcut Creator ---
+% --- EditorSessionCommander Shortcut Creator ---
 % This script creates shortcuts for Save, Open, and Manage sessions.
 % It handles both legacy Java shortcuts and modern Toolstrip Favorites.
 
 % 1. Setup Data
-newClassName = 'EditorManager';
+newClassName = 'EditorSessionCommander';
 
 % Pull metadata from the class properties we defined earlier
-sCategory = EditorManager.shortcutCategory;
+sCategory = EditorSessionCommander.shortcutCategory;
 sNames = {
-    EditorManager.shortcutSave;
-    EditorManager.shortcutOpen;
-    EditorManager.shortcutManageSessions};
+    EditorSessionCommander.shortcutSave;
+    EditorSessionCommander.shortcutOpen;
+    EditorSessionCommander.shortcutManageSessions};
 
 sCallbacks = {
-    'EditorManager.saveSession()';
-    'EditorManager.openSession()';
-    'EditorManager.manageSessions()'};
+    'EditorSessionCommander.saveSession()';
+    'EditorSessionCommander.openSession()';
+    'EditorSessionCommander.manageSessions()'};
 
 % Check if we are in the modern Web Desktop
 hApp = matlab.ui.container.internal.RootApp.getInstance();

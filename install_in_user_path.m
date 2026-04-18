@@ -1,8 +1,8 @@
-% --- EditorManager Installer Script ---
-% Copies the EditorManager class and its dependencies to the user path
-% so it's always available when MATLAB starts.
+% --- EditorSessionCommander Installer Script ---
+% Copies the EditorSessionCommander class and its dependencies to the user
+% path so it's always available when MATLAB starts.
 
-newClassName = 'EditorManager';
+newClassName = 'EditorSessionCommander';
 oldPackageName = 'editorLayout'; % For reference/cleanup
 sourceLocation = which(newClassName);
 
@@ -27,7 +27,7 @@ uPath = regexprep(uPath, '[ pathsep ]', '');
 destinationLocation = fullfile(uPath, [newClassName '.m']);
 
 if strcmp(sourceLocation, destinationLocation)
-    warning('EditorManager is already running from the user path. No copy needed.');
+    warning('EditorSessionCommander is already running from the user path. No copy needed.');
 else
     try
         copyfile(sourceLocation, destinationLocation);
@@ -38,8 +38,8 @@ else
 end
 
 % 3. Handle Dependencies
-% Add any other helper files (like chooseOption.m) here.
-dependencies = {'chooseOption'};
+% Add any other helper files (previously used for chooseOption.m) here.
+dependencies = {};
 for i = 1:length(dependencies)
     origDepLocation = which(dependencies{i});
     if ~isempty(origDepLocation)
@@ -55,4 +55,4 @@ for i = 1:length(dependencies)
 end
 
 disp('--- Setup Complete ---');
-disp('EditorManager is now installed in your userpath.');
+disp('EditorSessionCommander is now installed in your userpath.');

@@ -1,6 +1,6 @@
-function call_EditorManager(name, mode)
-    % Wrapper for EditorManager to handle OS-specific session names 
-    % and Project Root navigation.
+function call_EditorSessionCommander(name, mode)
+    % Wrapper for EditorSessionCommander to handle OS-specific session
+    % names and Project Root navigation.
 
     % 1. Validate session name
     if ~ischar(name) && ~isstring(name)

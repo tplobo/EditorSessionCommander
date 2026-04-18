@@ -1,10 +1,10 @@
-classdef EditorManager < handle
-    % EditorManager: Manages Editor sessions for both Java and HTML/AppContainer versions.
+classdef EditorSessionCommander < handle
+    % EditorSessionCommander: Controls Editor sessions for both Java and
+    % HTML versions.
 
     properties
         xmlDocument
         xmlFileName
-        % New property to hold the active AppContainer handle
         hApp
     end
 
@@ -26,30 +26,23 @@ classdef EditorManager < handle
         sessionLastSaved = 'lastSaved';
 
         sessionLayoutNode = 'Layout';
-
-        % UPDATED: R2026a Tile Logic
-        % We keep these for XML compatibility, but we add Grid Dimensions
         sessionTileNode = 'Tile';
-        gridWidth  = 'gridW'; % Number of columns
-        gridHeight = 'gridH'; % Number of rows
+        sessionFileNode = 'File';
 
-        dispScale   = 10000;
-
-        % These are mostly legacy now, but kept for old XMLs
+        dispScale   = 10000;        % Scaling for modern displays
         tileH = 'h'; 
         tileW = 'w';
         tileX = 'x';
         tileY = 'y';
 
-        sessionFileNode = 'File';
         fileName = 'name';
-        fileTile = 'tile'; % This remains crucial!
+        fileTile = 'tile'; 
         fileSelectionOrder = 'order';
     end
 
     methods
 
-        function obj = EditorManager()
+        function obj = EditorSessionCommander()
             % Constructor: Initialize XML and ensure Editor is Docked for R2026a
             
             obj.xmlFileName = fullfile(prefdir, obj.sessionsXMLshort);
@@ -70,10 +63,9 @@ classdef EditorManager < handle
             
             % 2. Hook into the R2026a Engine
             try
-                % Attempt to Dock the Editor if it is currently floating
-                % This ensures DocumentLayout captures the files.
+                % Dock the Editor if it is currently floating to ensure
+                % DocumentLayout of RootApp captures the files.
                 obj.dockEditor(); 
-                
                 obj.hApp = matlab.ui.container.internal.RootApp.getInstance();
             catch
                 obj.hApp = [];
@@ -115,7 +107,7 @@ classdef EditorManager < handle
             % Convert bool to string for XML storage
             if addSubDirectoriesToPath; recurseStr = 'true'; else, recurseStr = 'false'; end
 
-            % 1. Create the high-level Session Node
+            % Create the high-level Session Node
             newSessionNode = obj.xmlDocument.createElement(obj.sessionNode);
             newSessionNode.setAttribute(obj.sessionName, sessionName);
             newSessionNode.setAttribute(obj.sessionCurrentFolder, pwd);
@@ -144,6 +136,7 @@ classdef EditorManager < handle
 
                 % Iterate through Tiles defined in the modern Layout
                 for t = 1:numel(layout.tileOccupancy)
+
                     % Find grid cells covered by this tile to calculate proportions
                     [rows, cols] = find(tc == t);
                     if isempty(rows), continue; end
@@ -252,29 +245,29 @@ classdef EditorManager < handle
             % UPDATEFILE Modifies, adds, or removes file entries within a session node.
 
             if isempty(newFileName)
-                % 1. Delete the node if newFileName is empty
+                % Delete the node if newFileName is empty
                 parentSessionNode = fileNode.getParentNode();
                 if ~isempty(parentSessionNode)
                     parentSessionNode.removeChild(fileNode);
                 end
 
             elseif iscellstr(newFileName) || (isstring(newFileName) && numel(newFileName) > 1)
-                % 2. Handle a list of filenames
+                % Handle a list of filenames
                 % Update the first node and insert clones for the rest
                 fileLocation = newFileName{1};
                 fileNode.setAttribute(obj.fileName, fileLocation);
                 parentSessionNode = fileNode.getParentNode();
-
                 for i = 2:length(newFileName)
                     fileLocation = newFileName{i};
                     fileNodeCopy = fileNode.cloneNode(true);
                     fileNodeCopy.setAttribute(obj.fileName, fileLocation);
+
                     % Insert before the current node to maintain relative order
                     parentSessionNode.insertBefore(fileNodeCopy, fileNode);
                 end
 
             else
-                % 3. Update a single filename
+                % Update a single filename
                 % If it's just a name+ext, resolve the full path using 'which'
                 resolvedPath = which(newFileName);
                 if ~isempty(resolvedPath)
@@ -350,12 +343,12 @@ classdef EditorManager < handle
                 h(i) = str2double(node.getAttribute(obj.tileH));
             end
             
-            % --- SMART GRID INFERENCE ---
-            % 1. Identify unique "breakpoints" for rows and columns
+            % Infer grid
+            % Identify unique "breakpoints" for rows and columns
             uniqueX = sort(unique(x));
             uniqueY = sort(unique(y));
             
-            % 2. Map pixel positions to 0-based grid indices
+            % Map pixel positions to 0-based grid indices
             gx = zeros(numTiles, 1); gy = zeros(numTiles, 1);
             gw = zeros(numTiles, 1); gh = zeros(numTiles, 1);
             
@@ -391,14 +384,14 @@ classdef EditorManager < handle
             isModern = ~isempty(matlab.ui.container.internal.RootApp.getInstance());
 
             if isModern
-                % --- Modern R2026a Path ---
+                % --- MODERN HTML PATH --- %
                 allDocs = matlab.desktop.editor.getAll;
                 fileNames = {allDocs.Filename}';
                 % In the new architecture, we don't use Java ViewClients.
                 % We return the AppContainerDocument handles or empty for compatibility.
                 fileViewClients = arrayfun(@(d) d.Editor.AppContainerDocument, allDocs, 'UniformOutput', false);
             else
-                % --- Legacy Java Path ---
+                % --- LEGACY JAVA PATH --- %
                 try
                     jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                     fileViewClients = jDesktop.getGroupMembers('Editor');
@@ -435,6 +428,7 @@ classdef EditorManager < handle
             isModern = ~isempty(matlab.ui.container.internal.RootApp.getInstance());
 
             if isModern
+                % --- MODERN HTML PATH --- %
                 % Find the document in the modern editor API
                 allDocs = matlab.desktop.editor.getAll;
                 % Match by filename (absolute path)
@@ -458,8 +452,8 @@ classdef EditorManager < handle
                     warning('EditorManager:ClientNotFound', 'Cannot retrieve client view for %s', fileName);
                 end
 
-                % 2. Legacy Java Path
             else
+                % --- LEGACY JAVA PATH --- %
                 if nargin < 2
                     jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 end
@@ -489,7 +483,7 @@ classdef EditorManager < handle
             end
             if nargin < 4, externalDimsXYWH = []; end
 
-            % 1. Modern R2026a Path
+            % --- MODERN HTML PATH --- %
             hApp = matlab.ui.container.internal.RootApp.getInstance();
             if ~isempty(hApp)
                 % Grab the current layout state
@@ -530,8 +524,8 @@ classdef EditorManager < handle
                 % Push the updated layout back to the engine
                 hApp.DocumentLayout = L;
 
-                % 2. Legacy Java Path
             else
+                % --- LEGACY JAVA PATH --- %
                 if isempty(jDesktop)
                     jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 end
@@ -566,12 +560,16 @@ classdef EditorManager < handle
             % NameIn: Name of the session to load.
             % TreatmentOfOpenFiles: 'c' for close others, 'a' for append (logic usually follows in later blocks).
 
-            % 1. Initialize the Manager
+            % Initialize the Manager
             % Note: Using the updated class name 'EditorManager'
             obj = EditorManager(); 
             [T, sessions, files] = obj.getSessions();
 
-            % 2. Session Selection Logic
+            % ----------------------------------------------------------- %
+            % Block 1: Preparation
+            % ----------------------------------------------------------- %
+
+            % Session Selection Logic
             if nargin < 1 || isempty(NameIn)
                 indexFound = chooseOption(T);
                 while length(indexFound) > 1
@@ -596,14 +594,14 @@ classdef EditorManager < handle
                 end
             end
 
-            % 3. Update "Last Used" Metadata
+            % Update "Last Used" Metadata
             % indexFound is 1-based from table, XML items are 0-based
             sessionNode = sessions.item(indexFound - 1);
             dateTime = datestr(now);
             sessionNode.setAttribute(obj.sessionLastUsed, dateTime);
             obj.save(); % Commit the "Last Used" timestamp to XML
 
-            % 4. Environment Setup
+            % Environment Setup
             % Change MATLAB working directory to where the session was saved
             try
                 targetDir = T.currentFolder{indexFound};
@@ -621,11 +619,11 @@ classdef EditorManager < handle
                 addpath(genpath(pwd));
             end
 
-            % --- End of Block 1 ---
+            % ----------------------------------------------------------- %
+            % Block 2: Layout Requirements & Cleanup
+            % ----------------------------------------------------------- %
 
-            % --- Block 2: Layout Requirements & Cleanup ---
-
-            % 5. Calculate Tile Requirements
+            % Calculate Tile Requirements
             numFilesCount = T.numFiles{indexFound};
             maxTiles = -1;
             tiles = zeros(numFilesCount, 1);
@@ -649,12 +647,12 @@ classdef EditorManager < handle
 
             numTilesNeeded = maxTiles + 1;
 
-            % 6. Cleanup Phase
+            % Cleanup
             % In the old version, this cleared "Invalid" Java views.
             % In R2026a, we ensure the RootApp is ready.
 
             if isempty(obj.hApp)
-                % --- Legacy Java Cleanup ---
+                % --- LEGACY JAVA PATH --- %
                 jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 editorGroupMembers = jDesktop.getGroupMembers('Editor');
                 nInvalid = 0;
@@ -676,7 +674,7 @@ classdef EditorManager < handle
                     fprintf('Legacy: Found %d invalid Java views. Attempted validation.\n', nInvalid);
                 end
             else
-                % --- Modern R2026a Cleanup ---
+                % --- MODERN HTML PATH --- %
                 % The AppContainer handles tab health automatically. 
                 % We can verify the DocumentLayout exists.
                 if isempty(obj.hApp.DocumentLayout)
@@ -689,9 +687,9 @@ classdef EditorManager < handle
                 end
             end
 
-            % --- End of Block 2 ---
-
-            % --- Block 3: Layout Reconstruction (Grid & Spans) ---
+            % ----------------------------------------------------------- %
+            % Block 3: Layout Reconstruction (Grid & Spans)
+            % ----------------------------------------------------------- %
 
             [layoutNode, layoutWH, tileTable] = obj.getLayout(sessionNode);
             if isempty(layoutNode)
@@ -699,7 +697,7 @@ classdef EditorManager < handle
             end
 
             if ~isempty(obj.hApp)
-                % --- MODERN HTML PATH ---
+                % --- MODERN HTML PATH --- %
                 % We prepare the struct. We don't apply it yet—we wait until 
                 % the files are actually opened in Block 4.
 
@@ -743,7 +741,7 @@ classdef EditorManager < handle
                 pendingLayout = modernL;
 
             else
-                % --- LEGACY JAVA PATH ---
+                % --- LEGACY JAVA PATH --- %
                 jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 if numTilesNeeded == 1
                     if jDesktop.getDocumentArrangement('Editor') ~= 1
@@ -768,12 +766,12 @@ classdef EditorManager < handle
                 end
             end
 
-            % --- End of Block 3 ---
-
-            % --- Block 4: Tile Stabilization (Marker Files) ---
+            % ----------------------------------------------------------- %
+            % Block 4: Tile Stabilization (Marker Files)
+            % ----------------------------------------------------------- %
 
             if isempty(obj.hApp)
-                % --- LEGACY JAVA PATH ---
+                % --- LEGACY JAVA PATH --- %
                 % This logic ensures Java doesn't collapse the grid.
 
                 % Use the new class name for the 'what' call
@@ -807,16 +805,16 @@ classdef EditorManager < handle
                     end
                 end
             else
-                % --- MODERN HTML PATH ---
+                % --- MODERN HTML PATH --- %
                 % We do nothing here! 
                 % We don't need marker files because we have 'pendingLayout'.
                 % The AppContainer will maintain the grid structure automatically.
                 testFile = {}; 
             end
 
-            % --- End of Block 4 ---
-
-            % --- Block 5: File Reconciliation & Opening ---
+            % ----------------------------------------------------------- %
+            % Block 5: File Reconciliation & Opening
+            % ----------------------------------------------------------- %
             
             % Get currently open files (using our modernized static method)
             [editorOpenFileNames, ~] = EditorManager.getOpenEditorFiles();
@@ -927,17 +925,19 @@ classdef EditorManager < handle
                 end
             end
 
-            % --- Block 6: Tile Correlation & Coordinate Mapping ---
+            % ----------------------------------------------------------- %
+            % Block 6: Tile Correlation & Coordinate Mapping
+            % ----------------------------------------------------------- %
 
             if ~isempty(obj.hApp)
-                % --- MODERN HTML PATH ---
+                % --- MODERN HTML PATH --- %
                 % In the new system, we don't need to "test" where tiles are.
                 % The tile IDs we set in pendingLayout.tileCoverage are absolute.
                 % We just map our requested tiles directly.
                 actualTile = tiles; 
 
             else
-                % --- LEGACY JAVA PATH ---
+                % --- LEGACY JAVA PATH --- %
                 % Maintain the original coordinate-checking logic for Java
                 if numTilesNeeded > 1
                     % Extract geometry from table
@@ -1010,12 +1010,13 @@ classdef EditorManager < handle
                 end
             end
 
-            % --- End of Block 6 ---
-
-            % --- Block 7: Final Move, Closing Unwanted Files, and Cleanup ---
+            % ----------------------------------------------------------- %
+            % Block 7: Final Move, Closing Unwanted Files, and Cleanup
+            % ----------------------------------------------------------- %
 
             if ~isempty(obj.hApp)
-                % --- MODERN HTML PATH ---
+                % --- MODERN HTML PATH --- %
+
                 % 1. STRICT CLEANUP: Close any files NOT in this session
                 % This prevents the "Unusable UI" bug by ensuring the Editor 
                 % only has files that the layout explicitly knows about.
@@ -1078,7 +1079,7 @@ classdef EditorManager < handle
                 newLayout.tileOccupancy = occ;
 
                 % For debugging:
-                %
+                %{
                 display(rowWeights);
                 display(columnWeights);
                 display(coverageMap);
@@ -1103,8 +1104,8 @@ classdef EditorManager < handle
                 end
 
             else
-                % --- LEGACY JAVA PATH ---
-                % 1. Move real files to their correlated tiles
+                % --- LEGACY JAVA PATH --- %
+                % Move real files to their correlated tiles
                 for i = 1:numSessionFiles
                     if sessionTileStatus(i)
                         if tiles(i) >= 0
@@ -1121,7 +1122,7 @@ classdef EditorManager < handle
                     end
                 end
 
-                % 2. Close marker files
+                % Close marker files
                 if numTilesNeeded > 1
                     for i = 1:numTilesNeeded
                         jDesktop.closeClient(testFile{i});
@@ -1129,7 +1130,7 @@ classdef EditorManager < handle
                     end
                 end
 
-                % 3. Close files not in session (Interactive logic)
+                % Close files not in session (Interactive logic)
                 if any(editorFileStatus == 0)
                     % [Your original interactive loop for 'cki' remains here]
                     % (Omitting loop for brevity, but keep it in your .m file)
@@ -1139,7 +1140,7 @@ classdef EditorManager < handle
             % Final save of the XML to update timestamps
             obj.save();
 
-            % 4. Physical Cleanup of marker files (Generic)
+            % Physical Cleanup of marker files (Generic)
             if ~isempty(testFile)
                 for i = 1:length(testFile)
                     if exist(testFile{i}, 'file'), delete(testFile{i}); end
@@ -1155,7 +1156,7 @@ classdef EditorManager < handle
             obj = EditorManager();
             [T, sessions, ~] = obj.getSessions();
 
-            % 1. Interactive Name Selection
+            % Interactive Name Selection
             if nargin == 0
                 if height(T) > 0
                     fprintf(1, '\nExisting session files:\n');
@@ -1171,7 +1172,7 @@ classdef EditorManager < handle
                 end
             end
 
-            % 2. Match Name or Index
+            % Match Name or Index
             matchnum = 0;
             nameMatch = find(strcmp(sessionName, T.name), 1, 'last');
 
@@ -1186,7 +1187,7 @@ classdef EditorManager < handle
                 end
             end
 
-            % 3. Overwrite vs. New Logic
+            % Overwrite vs. New Logic
             if matchnum ~= 0
                 % Overwriting an existing session
                 disp(['Overwriting existing session: ', sessionName]);
@@ -1210,7 +1211,7 @@ classdef EditorManager < handle
                 end
             end
 
-            % 4. Execute the Save
+            % Execute the Save
             % appendSession now handles the Java/HTML branching internally
             obj.appendSession(sessionName, addSubDirectoriesToPath);
             obj.save();
@@ -1221,7 +1222,7 @@ classdef EditorManager < handle
         function saveAsSession(sessionName, addSubDirectoriesToPath)
             % SAVEASSESSION Directly appends a new session without checking for duplicates.
 
-            % 1. Interactive Name Collection
+            % Interactive Name Collection
             if nargin < 1 || isempty(sessionName)
                 sessionName = input('Please enter a name for this session: ', 's' );
                 if isempty(sessionName)
@@ -1230,7 +1231,7 @@ classdef EditorManager < handle
                 end
             end
 
-            % 2. Path Option Collection
+            % Path Option Collection
             if nargin < 2
                 % Using a simplified check for broader compatibility
                 resp = input('Include sub-directories in path when loaded (y/n)? ', 's');
@@ -1241,7 +1242,7 @@ classdef EditorManager < handle
                 end
             end
 
-            % 3. Execute
+            % Execute
             % Initialize the manager
             obj = EditorManager();
 
@@ -1341,11 +1342,11 @@ classdef EditorManager < handle
             end
             if isempty(indexFound), return; end
 
-            % 1. Display Header Table
+            % Display Header Table
             fprintf(1, '\n--- Session Overview ---\n');
             disp(T(indexFound, :));
 
-            % 2. Display Individual File Nodes
+            % Display Individual File Nodes
             fprintf(1, 'Files in this session:\n');
             numFiles = T.numFiles{indexFound};
             for i = 1:numFiles
@@ -1372,7 +1373,7 @@ classdef EditorManager < handle
                 end
             end
 
-            % 3. Display Layout Metadata
+            % Display Layout Metadata
             sessionNode = sessions.item(indexFound-1);
             [~, layoutWH, tileTable] = obj.getLayout(sessionNode);
 
@@ -1456,14 +1457,14 @@ classdef EditorManager < handle
             % Ensures the Editor is the active window for the OS
             allDocs = matlab.desktop.editor.getAll;
             if ~isempty(allDocs)
-                % 1. Make the first document active in MATLAB
+                % Make the first document active in MATLAB
                 allDocs(1).makeActive();
             else
                 % If no files are open, create a temporary one
                 matlab.desktop.editor.newDocument;
             end
             
-            % 2. Small pause to allow the Desktop to shift window focus
+            % Small pause to allow the Desktop to shift window focus
             pause(0.3);
         end
 
@@ -1523,4 +1524,104 @@ function response = inputLowerValidatedChar(question, validResponses, predicate)
     
     % Return only the first character, normalized to lowercase
     response = lower(response(1));
+end
+
+function indexFound = chooseOption(T, dialogueInterface, TParent)
+% CHOOSEOPTION Returns a valid row index from a table based on user input.
+% Supports fuzzy name matching and index selection.
+
+    if nargin < 3
+        TParent = [];
+    end
+    
+    % Default interface uses Command Window (standard for R2026a)
+    if nargin < 2 || isempty(dialogueInterface)
+        dialogueInterface.displayTable = @disp;
+        dialogueInterface.requestInput = @(s) input(s, 's');
+        dialogueInterface.displayText  = @disp;
+    end
+    
+    checkTCompatible(T);
+    isSubSelection = ~isempty(TParent);
+    
+    % Show the user the available options
+    dialogueInterface.displayTable(T);
+    
+    userInput = dialogueInterface.requestInput('Please enter option index or name (Press Enter to cancel): ');
+    
+    % Handle Cancellation
+    if isempty(userInput)
+        if isSubSelection
+            indexFound = chooseOption(TParent, dialogueInterface);
+        else
+            indexFound = [];
+        end
+        return;
+    end
+    
+    % Check if input is a numeric index
+    indexFound = str2double(userInput); % str2double is safer than str2num
+
+    if isnan(indexFound)
+        % It's a string name - perform Fuzzy Match
+        % Order: Exact -> Case-Insensitive -> Partial -> Partial Case-Insensitive
+        compareFunctions = {@strcmp, @strcmpi, @(s, n) strncmp(s, n, length(s)), @(s, n) strncmpi(s, n, length(s))};
+        indexMatched = false;
+        attempt = 1;
+    
+        while ~indexMatched
+            if attempt <= 4
+                % Extract the comparison logic
+                logicalMatch = compareFunctions{attempt}(userInput, T.name);
+    
+                if any(logicalMatch)
+                    if sum(logicalMatch) > 1
+                        % Ambiguous match - filter table and ask again
+                        dialogueInterface.displayText('Multiple names matched. Please refine selection:');
+                        indexFound = chooseOption(T(logicalMatch, :), dialogueInterface, T);
+                        indexMatched = true;
+                    else
+                        % Unique match found
+                        indexFound = T.index(logicalMatch);
+                        indexMatched = true;
+                    end
+                else
+                    attempt = attempt + 1;
+                end
+            else
+                % No matches found at any level
+                dialogueInterface.displayText(['No match found for "', userInput, '". Please try again.']);
+                indexFound = chooseOption(T, dialogueInterface, TParent);
+                break;
+            end
+        end
+    end
+
+    % Post-Selection Validation
+    if isSubSelection
+        if isempty(indexFound)
+            indexFound = chooseOption(TParent, dialogueInterface);
+        elseif ~any(indexFound == T.index)
+            dialogueInterface.displayText([num2str(indexFound) ' is not in the sub-selection. Try again.']);
+            indexFound = chooseOption(T, dialogueInterface, TParent);
+        end
+    else
+        % Final check: ensure the resulting indices actually exist in the table
+        if ~isempty(indexFound)
+            isValid = ismember(indexFound, T.index);
+            if ~all(isValid)
+                dialogueInterface.displayText('One or more indices are invalid. Please try again.');
+                indexFound = chooseOption(T, dialogueInterface);
+            end
+        end
+    end
+
+    % Nested validation function
+    function checkTCompatible(tab)
+        vars = tab.Properties.VariableNames;
+        if ~any(strcmp('index', vars)) || ~any(strcmp('name', vars))
+            error('chooseOption:InvalidTable', 'Table must contain "index" and "name" columns.');
+        end
+    end
+
 end

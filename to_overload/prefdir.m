@@ -1,6 +1,6 @@
 function output = prefdir()
     % Overload the 'prefdir' built-in matlab function, to change the save
-    % location for the EditorSessionManager package.
+    % location for the EditorSessionCommander package.
     
     % Start-up and shut-down functions directory
     functions_dir = 'PROJECT';
