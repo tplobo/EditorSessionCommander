@@ -321,69 +321,56 @@ classdef EditorManager < handle
         end
 
         function [layoutNode, layoutWH, tileTable] = getLayout(obj, session)
-            % GETLAYOUT Extracts grid dimensions and detailed tile metadata (Pixels + Grid)
             layoutNodeList = session.getElementsByTagName(obj.sessionLayoutNode);
-            L = layoutNodeList.getLength;
-            
-            if L == 0
-                layoutNode = []; layoutWH = []; tileTable = [];
-                return;
-            elseif L > 1
-                warning('Multiple layouts found in session XML; using the first one.');
+            if layoutNodeList.getLength == 0
+                layoutNode = []; layoutWH = []; tileTable = []; return;
             end
-            
             layoutNode = layoutNodeList.item(0);
             
-            % Read Grid Dimensions (W = Columns, H = Rows)
+            % Read Grid Dimensions
             W = str2double(layoutNode.getAttribute(obj.tileW));
             H = str2double(layoutNode.getAttribute(obj.tileH));
             layoutWH = [W H];
             
             tileNodes = layoutNode.getElementsByTagName(obj.sessionTileNode);
             numTiles = tileNodes.getLength;
-            
-            % Initialize arrays for the tile table
-            % Standard x,y,w,h are for weights (pseudo-pixels)
-            % gx, gy, gw, gh are for the coverageMap matrix indices
-            tile = zeros(numTiles, 1);
-            x = zeros(numTiles, 1);
-            y = zeros(numTiles, 1);
-            w = zeros(numTiles, 1);
-            h = zeros(numTiles, 1);
-            gx = zeros(numTiles, 1);
-            gy = zeros(numTiles, 1);
-            gw = zeros(numTiles, 1);
-            gh = zeros(numTiles, 1);
+            tile = zeros(numTiles, 1); x = zeros(numTiles, 1); y = zeros(numTiles, 1);
+            w = zeros(numTiles, 1); h = zeros(numTiles, 1);
             
             for i = 1:numTiles
-                tileNode = tileNodes.item(i-1);
-                tile(i) = str2double(tileNode.getAttribute(obj.fileTile));
-                
-                % 1. Extract Weight Proportions (Pseudo-pixels)
-                valX = str2double(tileNode.getAttribute('x'));
-                valY = str2double(tileNode.getAttribute('y'));
-                valW = str2double(tileNode.getAttribute(obj.tileW));
-                valH = str2double(tileNode.getAttribute(obj.tileH));
-                
-                if ~isnan(valX), x(i) = valX; end
-                if ~isnan(valY), y(i) = valY; end
-                if ~isnan(valW), w(i) = valW; end
-                if ~isnan(valH), h(i) = valH; end
-                
-                % 2. Extract Grid-based Mapping (New attributes from modern appendSession)
-                % If these don't exist (older XML), we default to 0/1 logic
-                vGX = str2double(tileNode.getAttribute('gridX'));
-                vGY = str2double(tileNode.getAttribute('gridY'));
-                vGW = str2double(tileNode.getAttribute('gridW'));
-                vGH = str2double(tileNode.getAttribute('gridH'));
-                
-                if ~isnan(vGX), gx(i) = vGX; else, gx(i) = x(i); end
-                if ~isnan(vGY), gy(i) = vGY; else, gy(i) = y(i); end
-                if ~isnan(vGW), gw(i) = vGW; else, gw(i) = 1;    end
-                if ~isnan(vGH), gh(i) = vGH; else, gh(i) = 1;    end
+                node = tileNodes.item(i-1);
+                tile(i) = str2double(node.getAttribute(obj.fileTile));
+                x(i) = str2double(node.getAttribute('x'));
+                y(i) = str2double(node.getAttribute('y'));
+                w(i) = str2double(node.getAttribute(obj.tileW));
+                h(i) = str2double(node.getAttribute(obj.tileH));
             end
             
-            % Construct the table with both coordinate systems
+            % --- SMART GRID INFERENCE ---
+            % 1. Identify unique "breakpoints" for rows and columns
+            uniqueX = sort(unique(x));
+            uniqueY = sort(unique(y));
+            
+            % 2. Map pixel positions to 0-based grid indices
+            gx = zeros(numTiles, 1); gy = zeros(numTiles, 1);
+            gw = zeros(numTiles, 1); gh = zeros(numTiles, 1);
+            
+            for i = 1:numTiles
+                % Find which "bin" the pixel position falls into
+                gx(i) = find(uniqueX == x(i)) - 1;
+                gy(i) = find(uniqueY == y(i)) - 1;
+                
+                % Calculate spans: how many unique breakpoints does this tile cover?
+                % We look at x + w to see where the tile ends
+                endX = x(i) + w(i);
+                endY = y(i) + h(i);
+                
+                % Spans = (Index of end breakpoint) - (Index of start breakpoint)
+                % If endX doesn't match a breakpoint exactly, we find the closest one
+                gw(i) = sum(uniqueX < endX) - gx(i);
+                gh(i) = sum(uniqueY < endY) - gy(i);
+            end
+            
             tileTable = table(tile, x, y, w, h, gx, gy, gw, gh);
             tileTable = sortrows(tileTable, 'tile');
         end
@@ -1038,45 +1025,35 @@ classdef EditorManager < handle
 
                 % 2. RECONSTRUCT GEOMETRY
                 [~, layoutWH, tileTable] = obj.getLayout(sessions.item(indexFound-1));
-                tileTable = sortrows(tileTable, 'tile');
 
                 newLayout = struct();
                 newLayout.gridDimensions.w = layoutWH(1);
                 newLayout.gridDimensions.h = layoutWH(2);
                 newLayout.tileCount = height(tileTable);
                 
-                rows = zeros(1, layoutWH(2));
-                cols = zeros(1, layoutWH(1));
+                % Calculate Row/Col Weights from pixel breakpoints
+                % We take the difference between unique X/Y positions
+                uniqueX = sort(unique(tileTable.x));
+                uniqueY = sort(unique(tileTable.y));
+                
+                % To get the final width/height, we append the max (x+w) / (y+h)
+                allEdgesX = sort(unique([tileTable.x; tileTable.x + tileTable.w]));
+                allEdgesY = sort(unique([tileTable.y; tileTable.y + tileTable.h]));
+                
+                colWidths = diff(allEdgesX);
+                rowHeights = diff(allEdgesY);
+                rowWeights = rowHeights / sum(rowHeights);
+                columnWeights = colWidths / sum(colWidths);
+                
+                % Build Coverage Map
                 coverageMap = zeros(layoutWH(2), layoutWH(1)); 
-
                 for i = 1:height(tileTable)
-                    % Determine Grid Indices
-                    % If gridX is > gridDimensions.w, it's a "pixel" value, not an index.
-                    % We check for this to prevent the exploding matrix.
-                    if ismember('gx', tileTable.Properties.VariableNames) && ...
-                       all(tileTable.gx < layoutWH(1)) && all(tileTable.gy < layoutWH(2))
-                        gx = tileTable.gx(i); gy = tileTable.gy(i);
-                        gw = tileTable.gw(i); gh = tileTable.gh(i);
-                    else
-                        % INFERENCE: Find the first 0 in row-major scan
-                        [emptyCol, emptyRow] = find(coverageMap' == 0, 1, 'first');
-                        gx = emptyCol - 1; gy = emptyRow - 1;
-                        % Guess spans based on weights if needed, or default to 1
-                        gw = 1; gh = 1; 
-                        if layoutWH(1) > 1 && tileTable.w(i) > 7000, gw = layoutWH(1); end
-                    end
-                    
-                    % Fill Coverage Map (Must be indices!)
-                    rStart = gy + 1; rEnd = gy + gh;
-                    cStart = gx + 1; cEnd = gx + gw;
+                    rStart = tileTable.gy(i) + 1;
+                    rEnd   = tileTable.gy(i) + tileTable.gh(i);
+                    cStart = tileTable.gx(i) + 1;
+                    cEnd   = tileTable.gx(i) + tileTable.gw(i);
                     coverageMap(rStart:rEnd, cStart:cEnd) = i;
-
-                    % Reconstruct Weights
-                    rows(gy + 1) = tileTable.h(i) / gh;
-                    cols(gx + 1) = tileTable.w(i) / gw;
                 end
-                rowWeights = rows / sum(rows);
-                columnWeights = cols / sum(cols);
 
                 newLayout.rowWeights = rowWeights;
                 newLayout.columnWeights = columnWeights;
