@@ -127,42 +127,56 @@ classdef EditorManager < handle
 
             newLayoutNode = obj.xmlDocument.createElement(obj.sessionLayoutNode);
             newSessionNode.appendChild(newLayoutNode);
-
-            % --- MODERN HTML PATH ---
+            
             if ~isempty(obj.hApp)
+                % --- MODERN HTML PATH --- %
                 layout = obj.hApp.DocumentLayout;
 
                 % Set Grid Dimensions
                 newLayoutNode.setAttribute(obj.tileW, num2str(layout.gridDimensions.w));
                 newLayoutNode.setAttribute(obj.tileH, num2str(layout.gridDimensions.h));
+                
+                % To reconstruct complex layouts, we must save X, Y, W, H for each tile
+                % We derive these from the tileCoverage matrix
+                tc = layout.tileCoverage;
 
-                % Iterate through Tiles in the Layout
-                % Note: tileOccupancy is a cell array in R2026a
                 for t = 1:numel(layout.tileOccupancy)
-                    % Fix: Use () if it's a struct array, or handle both
+                    % 1. Find all cells in the grid belonging to this tile index
+                    [rows, cols] = find(tc == t);
+                    
+                    if isempty(rows)
+                        continue; % Skip empty tiles if any
+                    end
+                    
+                    % Calculate geometry (0-based for XML)
+                    tileX = min(cols) - 1;
+                    tileY = min(rows) - 1;
+                    tileW = max(cols) - min(cols) + 1;
+                    tileH = max(rows) - min(rows) + 1;
+                    
+                    tileNumStr = num2str(t - 1); % 0-based for XML
+
+                    % Create the Tile metadata node with REAL geometry
+                    newTileNode = obj.xmlDocument.createElement(obj.sessionTileNode);
+                    newTileNode.setAttribute(obj.fileTile, tileNumStr);
+                    newTileNode.setAttribute('x', num2str(tileX));
+                    newTileNode.setAttribute('y', num2str(tileY));
+                    newTileNode.setAttribute(obj.tileW, num2str(tileW));
+                    newTileNode.setAttribute(obj.tileH, num2str(tileH));
+                    newLayoutNode.appendChild(newTileNode);
+
+                    % 2. Handle Files (Children)
                     if iscell(layout.tileOccupancy)
                         tileData = layout.tileOccupancy{t};
                     else
                         tileData = layout.tileOccupancy(t);
                     end
-                    tileNumStr = num2str(t - 1); % Keep it 0-based for XML consistency
 
-                    % Create the Tile metadata node
-                    newTileNode = obj.xmlDocument.createElement(obj.sessionTileNode);
-                    newTileNode.setAttribute(obj.fileTile, tileNumStr);
-                    % HTML layout uses relative weights rather than pixel X/Y/W/H
-                    % but we store '1' or weights to satisfy old XML structure
-                    newTileNode.setAttribute(obj.tileH, '1'); 
-                    newTileNode.setAttribute(obj.tileW, '1');
-                    newLayoutNode.appendChild(newTileNode);
-
-                    % Iterate through files (children) in this tile
                     if ~isempty(tileData.children)
                         for c = 1:numel(tileData.children)
-                            % Accessing the ID from the child struct
                             childID = tileData.children(c).id;
 
-                            % ID is "editorFile_/path/to/file.m"
+                            % Strip prefix to get path
                             filePath = strrep(childID, 'editorFile_', '');
 
                             newFileNode = obj.xmlDocument.createElement(obj.sessionFileNode);
@@ -173,8 +187,8 @@ classdef EditorManager < handle
                     end
                 end
 
-                % --- LEGACY JAVA PATH ---
             else
+                % --- LEGACY JAVA PATH --- %
                 jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 nTileWH = jDesktop.getDocumentTiledDimension('Editor');
                 newLayoutNode.setAttribute(obj.tileW, num2str(nTileWH.getWidth));
@@ -1006,56 +1020,31 @@ classdef EditorManager < handle
                 % 2. RECONSTRUCT GEOMETRY
                 [~, layoutWH, tileTable] = obj.getLayout(sessions.item(indexFound-1));
                 
-                % Sort by XML tile ID (0, 1, 2...)
-                tileTable = sortrows(tileTable, 'tile');
-
                 newLayout = struct();
                 newLayout.gridDimensions.w = layoutWH(1);
                 newLayout.gridDimensions.h = layoutWH(2);
                 newLayout.tileCount = height(tileTable);
                 
-                % Initialize with zeros
                 coverageMap = zeros(layoutWH(2), layoutWH(1)); 
-                
-                % Check if the XML actually provided real coordinates
-                % If all X and Y are 0, we treat them as "Missing"
-                hasRealCoords = ~(all(tileTable.x == 0) && all(tileTable.y == 0));
 
                 for i = 1:height(tileTable)
+                    % Use the attributes we just saved in appendSession
+                    x = tileTable.x(i); 
+                    y = tileTable.y(i);
                     w = tileTable.w(i);
                     h = tileTable.h(i);
                     
-                    if hasRealCoords
-                        x = tileTable.x(i); 
-                        y = tileTable.y(i);
-                    else
-                        % --- ROW-MAJOR SCAN ---
-                        % Transpose the map to find the first empty cell row-by-row
-                        [emptyCol, emptyRow] = find(coverageMap' == 0, 1, 'first');
-                        
-                        if isempty(emptyCol)
-                            y = 0; x = 0; 
-                        else
-                            % find on transpose returns (col, row) relative to original
-                            y = emptyRow - 1; 
-                            x = emptyCol - 1;
-                        end
-                    end
-                    
-                    % Map to matrix (1-based)
+                    % Fill the map based on XML geometry
                     rStart = y + 1;
-                    rEnd   = min(newLayout.gridDimensions.h, y + h);
+                    rEnd   = y + h;
                     cStart = x + 1;
-                    cEnd   = min(newLayout.gridDimensions.w, x + w);
+                    cEnd   = x + w;
                     
-                    % Fill with the 1-based index 'i'
+                    % Map the matrix index 'i' (corresponds to XML tile + 1)
                     coverageMap(rStart:rEnd, cStart:cEnd) = i;
                 end
-                
-                % Final safety check for AppContainer
-                coverageMap(coverageMap == 0) = 1;
                 newLayout.tileCoverage = coverageMap;
-                disp(coverageMap);
+                display(coverageMap);
 
                 % Build the tileOccupancy Array
                 % We map files to the correct tile index based on the XML ID
@@ -1071,7 +1060,7 @@ classdef EditorManager < handle
                     occ(i).children = kids;
                 end
                 newLayout.tileOccupancy = occ';
-                disp(occ);
+                display(occ);
 
                 % Uniform Weights (The UI handles manual resizing after load)
                 newLayout.columnWeights = ones(1, layoutWH(1)) / layoutWH(1);
@@ -1093,197 +1082,6 @@ classdef EditorManager < handle
                     warning('EditorManager:LayoutError', ...
                         'Failed to arrange tiles: %s', ME.message);
                 end
-
-                
-                %{
-                % 1. Get layout geometry from XML
-                [~, layoutWH, tileTable] = obj.getLayout(sessions.item(indexFound-1));
-                
-                newLayout = struct();
-                newLayout.gridDimensions.w = layoutWH(1);
-                newLayout.gridDimensions.h = layoutWH(2);
-                
-                % Determine unique tiles found in the session metadata
-                % IMPORTANT: We use the height of tileTable to define tileCount
-                numTilesInSession = height(tileTable);
-                newLayout.tileCount = numTilesInSession;
-                
-                % 2. Build the Tile Coverage Matrix (The "Map")
-                % Indices in coverageMap MUST be between 1 and newLayout.tileCount
-                coverageMap = zeros(layoutWH(2), layoutWH(1));
-                
-                for i = 1:numTilesInSession
-                    % Grid coordinates from XML (assumed 0-based)
-                    x = tileTable.x(i) + 1;
-                    y = tileTable.y(i) + 1;
-                    w = tileTable.w(i);
-                    h = tileTable.h(i);
-                    
-                    % Use the loop index 'i' as the Tile ID in the matrix
-                    % This guarantees the value is within range [1, tileCount]
-                    coverageMap(y:(y+h-1), x:(x+w-1)) = i;
-                end
-                
-                % Check for any zeros (unassigned grid cells)
-                if any(coverageMap(:) == 0)
-                    % Fill holes with the first tile to avoid "out of range" error
-                    coverageMap(coverageMap == 0) = 1;
-                end
-                newLayout.tileCoverage = coverageMap;
-
-                % 3. Build Tile Occupancy (The "Content")
-                % Pre-allocate the struct array
-                tileOccupancy = repmat(struct('children', []), 1, numTilesInSession);
-                
-                for i = 1:numTilesInSession
-                    % Get the original XML tile attribute (e.g., 0, 1, 2)
-                    originalXMLTileID = tileTable.tile(i);
-                    
-                    % Find files belonging to this specific XML tile
-                    matchingFileIdx = find(sessionTileStatus & (tiles == originalXMLTileID));
-                    
-                    children = [];
-                    for f = 1:numel(matchingFileIdx)
-                        fIdx = matchingFileIdx(f);
-                        childEntry.id = "editorFile_" + string(tileFileCorrelation{fIdx});
-                        
-                        if isempty(children)
-                            children = childEntry;
-                        else
-                            children(end+1) = childEntry; %#ok<AGROW>
-                        end
-                    end
-                    % Assign to the same index 'i' used in coverageMap
-                    tileOccupancy(i).children = children;
-                end
-                
-                newLayout.tileOccupancy = tileOccupancy;
-
-                % 4. Setup Weights
-                newLayout.columnWeights = ones(1, layoutWH(1)) / layoutWH(1);
-                newLayout.rowWeights = ones(1, layoutWH(2)) / layoutWH(2);
-
-                % 5. File Cleanup (Close the focus-helper documents)
-                allOpenDocs = matlab.desktop.editor.getAll;
-                for d = 1:numel(allOpenDocs)
-                    % Close if NOT in the current session list
-                    if ~any(strcmp(allOpenDocs(d).Filename, tileFileCorrelation))
-                        allOpenDocs(d).closeNoPrompt();
-                    end
-                end
-
-                % 6. Apply
-                drawnow; % Flush the "Close" operations
-                try
-                    obj.hApp.DocumentLayout = newLayout;
-                    drawnow;
-                catch ME
-                    fprintf(2, 'Layout Error: %s\n', ME.message);
-                    % Log the map for debugging if it still fails
-                    disp('Generated Tile Coverage Map:');
-                    disp(newLayout.tileCoverage);
-                end
-                %}
-
-                %{
-                % 1. Initialize the struct based on the AppContainer documentation
-                newLayout = struct();
-                
-                % Use weights from XML if available, otherwise default to grid dims
-                % Note: layoutWH comes from your [~, layoutWH, ~] = obj.getLayout(session) call
-                [~, layoutWH, ~] = obj.getLayout(sessions.item(indexFound-1));
-                
-                newLayout.gridDimensions.w = layoutWH(1);
-                newLayout.gridDimensions.h = layoutWH(2);
-                
-                % Determine unique tiles mentioned in the session
-                uniqueTiles = unique(tiles(sessionTileStatus));
-                numTiles = numel(uniqueTiles);
-                newLayout.tileCount = numTiles;
-                
-                % Set weights (Simple uniform distribution if not specified)
-                newLayout.columnWeights = ones(1, layoutWH(1)) / layoutWH(1);
-                newLayout.rowWeights = ones(1, layoutWH(2)) / layoutWH(2);
-                
-                % Set Tile Coverage
-                % For a simple grid, this maps Tile 1 to (1,1), Tile 2 to (1,2), etc.
-                % If your grid is H=2, W=1, tileCoverage should be [1; 2]
-                if layoutWH(1) == 1 % Single column, multiple rows
-                    newLayout.tileCoverage = (1:numTiles)';
-                else
-                    % Default to a horizontal row of tiles
-                    newLayout.tileCoverage = 1:numTiles;
-                end
-
-                % 2. Build the tileOccupancy array
-                % We must pre-allocate the struct array to avoid field errors
-                tileOccupancy(numTiles) = struct('children', []);
-                
-                for t = 1:numTiles
-                    currentTileID = uniqueTiles(t);
-                    % Find all files belonging to this specific tile
-                    filesInThisTile = find(sessionTileStatus & (tiles == currentTileID));
-                    
-                    children = [];
-                    for fIdx = 1:numel(filesInThisTile)
-                        fileIdx = filesInThisTile(fIdx);
-                        % Construct the ID: "editorFile_" + full path
-                        childEntry.id = "editorFile_" + string(tileFileCorrelation{fileIdx});
-                        
-                        if isempty(children)
-                            children = childEntry;
-                        else
-                            children(end+1) = childEntry; %#ok<AGROW>
-                        end
-                    end
-                    tileOccupancy(t).children = children;
-                end
-                
-                newLayout.tileOccupancy = tileOccupancy;
-
-                % 3. Final atomic application
-                obj.hApp.DocumentLayout = newLayout;
-                %}
-
-                %{
-                % 1. Populate the Tile Occupancy in our pending struct
-                for t = 1:numel(pendingLayout.tileOccupancy)
-                    pendingLayout.tileOccupancy{t}.children = []; % Reset children
-                end
-
-                for i = 1:numSessionFiles
-                    if sessionTileStatus(i)
-                        % Map 0-based XML tile to 1-based struct index
-                        targetTileIdx = max(1, tiles(i) + 1);
-
-                        % Create the document entry for the AppContainer
-                        % id format: "editorFile_C:/path/to/file.m"
-                        newChild.id = "editorFile_" + string(tileFileCorrelation{i});
-
-                        if isempty(pendingLayout.tileOccupancy{targetTileIdx}.children)
-                            pendingLayout.tileOccupancy{targetTileIdx}.children = newChild;
-                        else
-                            pendingLayout.tileOccupancy{targetTileIdx}.children(end+1) = newChild;
-                        end
-                    end
-                end
-
-                % 2. Handle files not in session
-                if any(~editorFileStatus)
-                    if ~(exist('TreatmentOfOpenFiles','var') && strcmpi(TreatmentOfOpenFiles, 'k'))
-                        % Close others logic
-                        allDocs = matlab.desktop.editor.getAll;
-                        for d = 1:numel(allDocs)
-                            if ~any(strcmp(allDocs(d).Filename, tileFileCorrelation))
-                                allDocs(d).close();
-                            end
-                        end
-                    end
-                end
-
-                % 3. Apply the layout ATOMICALLY
-                obj.hApp.DocumentLayout = pendingLayout;
-                %}
 
             else
                 % --- LEGACY JAVA PATH ---
@@ -1707,113 +1505,3 @@ function response = inputLowerValidatedChar(question, validResponses, predicate)
     % Return only the first character, normalized to lowercase
     response = lower(response(1));
 end
-
-%{
-
-now I am having trouble with `call_EditorManager('test', 'load')`:
-```
-Undefined variable 'files'.
-
-Error in EditorManager.openSession (line 815)
-            fileNodes = files{indexFound};
-                        ^^^^^^^^^^^^^^^^^
-Error in call_EditorManager>access_Session (line 104)
-            EditorManager.openSession(name, 'c');
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-Error in call_EditorManager (line 28)
-            access_Session(name, mode);
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^
-```
-
-here's the relevant section:
-```
-% --- Block 4: Tile Stabilization (Marker Files) ---
-            if isempty(obj.hApp)
-                % --- LEGACY JAVA PATH ---
-                % This logic ensures Java doesn't collapse the grid.
-                % Use the new class name for the 'what' call
-                whatPkg = what('+EditorManager');
-                if isempty(whatPkg)
-                    % Fallback if package structure isn't detected
-                    packagePath = fileparts(mfilename('fullpath'));
-                else
-                    packagePath = whatPkg(1).path;
-                end
-                testFile = cell(numTilesNeeded, 1);
-                % We keep the marker file logic for Java
-                if exist('NeedToReRearrangeLater', 'var') && NeedToReRearrangeLater
-                    % (Omitting full loop for brevity, but it remains here for legacy)
-                    % Essentially, you create tileX_.m files and move them to Tile 0
-                end
-                % Standard marker file loop for Java
-                for i = 1:numTilesNeeded
-                    testFile{i} = fullfile(packagePath, ['tile' num2str(i-1) '.m']);
-                    % Create the marker file
-                    fid = fopen(testFile{i}, 'w');
-                    if fid ~= -1
-                        fclose(fid);
-                        % Use the editor API to open it
-                        matlab.desktop.editor.openDocument(testFile{i});
-                        % Set the tile using our version-aware setTile
-                        obj.setTile(testFile{i}, i-1, jDesktop);
-                    end
-                end
-            else
-                % --- MODERN HTML PATH ---
-                % We do nothing here! 
-                % We don't need marker files because we have 'pendingLayout'.
-                % The AppContainer will maintain the grid structure automatically.
-                testFile = {}; 
-            end
-            % --- End of Block 4 ---
-            % --- Block 5: File Reconciliation & Opening ---
-            
-            % Get currently open files (using our modernized static method)
-            [editorOpenFileNames, ~] = EditorManager.getOpenEditorFiles();
-            
-            % Generate a list of short names (name+ext) for fuzzy matching
-            editorShortNames = cell(size(editorOpenFileNames));
-            for i = 1:length(editorOpenFileNames)
-                [~, n, e] = fileparts(editorOpenFileNames{i});
-                editorShortNames{i} = [n e];
-            end
-            
-            numSessionFiles = T.numFiles{indexFound};
-            fileNodes = files{indexFound};
-            
-            % Create a static array of nodes to avoid indexing issues if we delete nodes
-            staticFileNodeArray = cell(1, numSessionFiles);
-            for i = 1:numSessionFiles
-                staticFileNodeArray{i} = fileNodes.item(i-1);
-            end
-...
-```
-
-indeed the rest of `openSession` does not define `files`, even when using it all the way back in Block 2:
-```
-...
-% --- Block 2: Layout Requirements & Cleanup ---
-            % 5. Calculate Tile Requirements
-            numFilesCount = T.numFiles{indexFound};
-            maxTiles = -1;
-            tiles = zeros(numFilesCount, 1);
-            % We iterate through the XML file nodes to see how many tiles were used
-            for i = 1:numFilesCount
-                fileNode = files{indexFound}.item(i-1);
-                tileAttr = char(fileNode.getAttribute(obj.fileTile));
-                if isempty(tileAttr)
-                    tileVal = 0; % Default to first tile
-                else
-                    tileVal = str2double(tileAttr);
-                end
-                if tileVal > maxTiles
-                    maxTiles = tileVal;
-                end
-                tiles(i) = tileVal;
-            end
-...
-```
-
-
-
-%}
