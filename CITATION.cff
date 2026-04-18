@@ -1,0 +1,28 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: 'tplobo/EditorSessionCommander: v1.0.1'
+message: 'If you use this software, please cite it as below.'
+type: software
+authors:
+  - given-names: Tiago
+    family-names: Pomella Lobo
+    orcid: 'https://orcid.org/0000-0001-5291-2114'
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.19644946
+repository-code: 'https://github.com/tplobo/EditorSessionCommander'
+url: 'https://github.com/tplobo/EditorSessionCommander'
+repository: >-
+  https://mathworks.com/matlabcentral/fileexchange/183700-editor-session-commander
+abstract: 'Save and load the layout of your MATLAB Editor window! '
+keywords:
+  - editor
+  - ide
+  - matlab
+  - session
+  - ui
+license: BSD-3-Clause
+version: v1.0.1
+date-released: '2026-04-18'
