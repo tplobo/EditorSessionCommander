@@ -87,6 +87,9 @@ function access_Session(name, mode)
 
     switch lower(mode)
         case {'save', 'recuperate'}
+            % 0. Dock Editor to ensure `tileOccupancy` will not be empty
+            EditorManager.dockEditor(); 
+
             % 1. Use the new class name
             % addSubDirectoriesToPath = false (per your original code)
             EditorManager.saveSession(name, false);
