@@ -105,6 +105,9 @@ function access_Session(name, mode)
             % 1. Use the new class name
             % 'c' = Close current files before opening session
             EditorManager.openSession(name, 'c'); 
+
+            % 2. Undock Editor (personal preference)
+            EditorManager.undockEditor(); 
             
         otherwise 
             % No action
