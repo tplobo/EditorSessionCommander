@@ -7,7 +7,8 @@ function call_EditorSessionCommander(name, mode)
         error('The name for an Editor Session must be a character vector or string.');
     end
     
-    % 2. Validate Operational System (Prefixing helps avoid path cross-contamination)
+    % 2. Validate Operational System
+    % (prefixes help avoiding path cross-contamination)
     if ismac
         name = ['mac-' char(name)];
     elseif isunix
@@ -76,11 +77,11 @@ function to_ProjectRoot(mode)
 end
 
 function access_Session(name, mode)
-    % Logic for interacting with the EditorManager class
+    % Logic for interacting with the EditorSessionCommander class
 
-    % Note: If you followed the previous step to put EditorManager 
+    % Note: If you followed the previous step to put EditorSessionCommander 
     % in your userpath, you might not even need the addpath/rmpath logic here.
-    path_ESM = fullfile('FILE_EXCHANGE', 'EditorManager');
+    path_ESM = fullfile('FILE_EXCHANGE', 'EditorSessionCommander');
     if exist(path_ESM, 'dir')
         addpath(genpath(path_ESM));
     end
@@ -88,11 +89,11 @@ function access_Session(name, mode)
     switch lower(mode)
         case {'save', 'recuperate'}
             % 0. Dock Editor to ensure `tileOccupancy` will not be empty
-            EditorManager.dockEditor(); 
+            EditorSessionCommander.dockEditor(); 
 
             % 1. Use the new class name
             % addSubDirectoriesToPath = false (per your original code)
-            EditorManager.saveSession(name, false);
+            EditorSessionCommander.saveSession(name, false);
             
             % 2. Close Editor session
             % In R2026a, getAll().closeNoPrompt() is standard for the Editor API
@@ -104,10 +105,10 @@ function access_Session(name, mode)
         case 'load'
             % 1. Use the new class name
             % 'c' = Close current files before opening session
-            EditorManager.openSession(name, 'c'); 
+            EditorSessionCommander.openSession(name, 'c'); 
 
             % 2. Undock Editor (personal preference)
-            EditorManager.undockEditor(); 
+            EditorSessionCommander.undockEditor(); 
             
         otherwise 
             % No action

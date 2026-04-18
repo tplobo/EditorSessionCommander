@@ -96,7 +96,7 @@ classdef EditorSessionCommander < handle
                 for i = 1:length(e.stack)
                     disp(e.stack(i));
                 end
-                error('EditorManager:SaveFailed', 'Could not write to file: %s', obj.xmlFileName);
+                error('EditorSessionCommander:SaveFailed', 'Could not write to file: %s', obj.xmlFileName);
             end
         end
 
@@ -449,7 +449,7 @@ classdef EditorSessionCommander < handle
                         end
                     end
                     client = [];
-                    warning('EditorManager:ClientNotFound', 'Cannot retrieve client view for %s', fileName);
+                    warning('EditorSessionCommander:ClientNotFound', 'Cannot retrieve client view for %s', fileName);
                 end
 
             else
@@ -466,7 +466,7 @@ classdef EditorSessionCommander < handle
                         % Check for ' [Read Only]'
                         client = jDesktop.getClient([fileName ' [Read Only]']);
                         if isempty(client)
-                            warning('EditorManager:ClientNotFound', 'Cannot retrieve client view for %s', fileName);
+                            warning('EditorSessionCommander:ClientNotFound', 'Cannot retrieve client view for %s', fileName);
                         end
                     end
                 end
@@ -530,8 +530,8 @@ classdef EditorSessionCommander < handle
                     jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 end
 
-                % Note: Update the class name below to your renamed 'EditorManager'
-                jEditorViewClient = EditorManager.getOpenClientByFileName(fileName, jDesktop);
+                % Note: Update the class name below to your renamed 'EditorSessionCommander'
+                jEditorViewClient = EditorSessionCommander.getOpenClientByFileName(fileName, jDesktop);
 
                 if isempty(jEditorViewClient), return; end
 
@@ -560,9 +560,8 @@ classdef EditorSessionCommander < handle
             % NameIn: Name of the session to load.
             % TreatmentOfOpenFiles: 'c' for close others, 'a' for append (logic usually follows in later blocks).
 
-            % Initialize the Manager
-            % Note: Using the updated class name 'EditorManager'
-            obj = EditorManager(); 
+            % Initialize the class
+            obj = EditorSessionCommander(); 
             [T, sessions, files] = obj.getSessions();
 
             % ----------------------------------------------------------- %
@@ -608,7 +607,7 @@ classdef EditorSessionCommander < handle
                 if exist(targetDir, 'dir')
                     cd(targetDir);
                 else
-                    warning('EditorManager:FolderNotFound', 'Saved folder not found: %s', targetDir);
+                    warning('EditorSessionCommander:FolderNotFound', 'Saved folder not found: %s', targetDir);
                 end
             catch ME
                 fprintf(2, 'Could not change directory: %s\n', ME.message);
@@ -775,7 +774,7 @@ classdef EditorSessionCommander < handle
                 % This logic ensures Java doesn't collapse the grid.
 
                 % Use the new class name for the 'what' call
-                whatPkg = what('+EditorManager');
+                whatPkg = what('+EditorSessionCommander');
                 if isempty(whatPkg)
                     % Fallback if package structure isn't detected
                     packagePath = fileparts(mfilename('fullpath'));
@@ -817,7 +816,7 @@ classdef EditorSessionCommander < handle
             % ----------------------------------------------------------- %
             
             % Get currently open files (using our modernized static method)
-            [editorOpenFileNames, ~] = EditorManager.getOpenEditorFiles();
+            [editorOpenFileNames, ~] = EditorSessionCommander.getOpenEditorFiles();
             
             % Generate a list of short names (name+ext) for fuzzy matching
             editorShortNames = cell(size(editorOpenFileNames));
@@ -962,12 +961,12 @@ classdef EditorSessionCommander < handle
                         % Ensure Java hasn't reset the grid
                         currDim = jDesktop.getDocumentTiledDimension('Editor');
                         if currDim.width ~= W || currDim.height ~= H
-                            error('EditorManager:LayoutError', 'Tile layout has been unset or corrupted.');
+                            error('EditorSessionCommander:LayoutError', 'Tile layout has been unset or corrupted.');
                         end
 
                         % Wait for Java to catch up and report coordinates
                         while cont
-                            client = EditorManager.getOpenClientByFileName(testFile{i}, jDesktop);
+                            client = EditorSessionCommander.getOpenClientByFileName(testFile{i}, jDesktop);
                             loc = jDesktop.getClientLocation(client);
                             if isempty(loc), continue; end
 
@@ -984,7 +983,7 @@ classdef EditorSessionCommander < handle
                     end
 
                     if any(xtest < 0) || any(ytest < 0)
-                        error('EditorManager:CorrelationError', 'Invalid tile properties read during correlation.');
+                        error('EditorSessionCommander:CorrelationError', 'Invalid tile properties read during correlation.');
                     end
 
                     % Map coordinates to grid indices
@@ -1001,7 +1000,7 @@ classdef EditorSessionCommander < handle
 
                         match = (rowReq == rowsActual & colReq == columnsActual);
                         if sum(match) ~= 1
-                            error('EditorManager:CorrelationError', 'Could not find a unique tile correlation match.');
+                            error('EditorSessionCommander:CorrelationError', 'Could not find a unique tile correlation match.');
                         end
                         actualTile(specifiedTile) = find(match, 1, 'first') - 1;
                     end
@@ -1099,7 +1098,7 @@ classdef EditorSessionCommander < handle
                     drawnow;
 
                 catch ME
-                    warning('EditorManager:LayoutError', ...
+                    warning('EditorSessionCommander:LayoutError', ...
                         'Failed to arrange tiles: %s', ME.message);
                 end
 
@@ -1150,10 +1149,10 @@ classdef EditorSessionCommander < handle
 
         function saveSession(sessionName, addSubDirectoriesToPath)
             % SAVESESSION Static entry point to save current editor state to XML.
-            % Usage: EditorManager.saveSession('MyProject', true)
+            % Usage: EditorSessionCommander.saveSession('MyProject', true)
 
-            % Initialize the manager (loads existing XML)
-            obj = EditorManager();
+            % Initialize the object (loads existing XML)
+            obj = EditorSessionCommander();
             [T, sessions, ~] = obj.getSessions();
 
             % Interactive Name Selection
@@ -1243,8 +1242,8 @@ classdef EditorSessionCommander < handle
             end
 
             % Execute
-            % Initialize the manager
-            obj = EditorManager();
+            % Initialize the class
+            obj = EditorSessionCommander();
 
             % appendSession handles the RootApp (HTML) vs MLDesktop (Java) logic
             obj.appendSession(sessionName, addSubDirectoriesToPath);
@@ -1255,7 +1254,7 @@ classdef EditorSessionCommander < handle
 
         function deleteSession()
             % DELETESESSION Interactive CLI to remove sessions from the XML.
-            obj = EditorManager();
+            obj = EditorSessionCommander();
             [T, sessions, ~] = obj.getSessions();
 
             if height(T) == 0
@@ -1295,7 +1294,7 @@ classdef EditorSessionCommander < handle
 
         function renameSession()
             % RENAMESESSION Interactive CLI to change a session's name attribute.
-            obj = EditorManager();
+            obj = EditorSessionCommander();
             [T, sessions, ~] = obj.getSessions();
 
             if height(T) == 0
@@ -1326,7 +1325,7 @@ classdef EditorSessionCommander < handle
 
         function viewSession()
             % VIEWSESSION Prints a detailed summary of a specific session's files and layout.
-            obj = EditorManager();
+            obj = EditorSessionCommander();
             [T, sessions, files] = obj.getSessions();
 
             if height(T) == 0
@@ -1391,7 +1390,7 @@ classdef EditorSessionCommander < handle
         end
 
         function manageSessions()
-            % MANAGESESSIONS Main interactive menu for the Editor Session Manager.
+            % MANAGESESSIONS Main interactive menu.
             % Launch this to save, open, rename, view, or delete sessions.
 
             choices = 'sorvde';
@@ -1401,15 +1400,15 @@ classdef EditorSessionCommander < handle
                 'Rename session'
                 'View session files and details'
                 'Delete session'
-                'Exit session manager'};
+                'Exit'};
 
-            % Define callbacks using the updated class name 'EditorManager'
+            % Define callbacks
             callbacks = { ...
-                @() EditorManager.saveSession();
-                @() EditorManager.openSession();
-                @() EditorManager.renameSession();
-                @() EditorManager.viewSession();
-                @() EditorManager.deleteSession();
+                @() EditorSessionCommander.saveSession();
+                @() EditorSessionCommander.openSession();
+                @() EditorSessionCommander.renameSession();
+                @() EditorSessionCommander.viewSession();
+                @() EditorSessionCommander.deleteSession();
                 @() []}; % Exit case
 
             response = '';
@@ -1417,7 +1416,7 @@ classdef EditorSessionCommander < handle
             while ~strcmpi(response, 'e')
                 % Note: Ensure inputLowerValidatedChar is accessible
                 response = inputLowerValidatedChar('What would you like to do? ', ...
-                    choices, @displaySessionManagerChoices);
+                    choices, @displayCommanderChoices);
 
                 if isempty(response), continue; end
 
@@ -1428,8 +1427,8 @@ classdef EditorSessionCommander < handle
                 end
             end
 
-            function displaySessionManagerChoices()
-                fprintf(1, '\n=== Editor Session Manager ===\n');
+            function displayCommanderChoices()
+                fprintf(1, '\n=== Editor Session Commander ===\n');
                 for i = 1:length(choices)
                     fprintf(1, ' [%s] %s\n', choices(i), descriptions{i});
                 end
@@ -1438,19 +1437,21 @@ classdef EditorSessionCommander < handle
 
         function dockEditor()
             % DOCKEDITOR: Forces Editor focus then sends Ctrl+Shift+D
-            EditorManager.ensureEditorFocus();
-            EditorManager.sendRobotKeys([java.awt.event.KeyEvent.VK_CONTROL, ...
-                                         java.awt.event.KeyEvent.VK_SHIFT, ...
-                                         java.awt.event.KeyEvent.VK_D]);
+            EditorSessionCommander.ensureEditorFocus();
+            EditorSessionCommander.sendRobotKeys(                           ...
+                [java.awt.event.KeyEvent.VK_CONTROL,                        ...
+                 java.awt.event.KeyEvent.VK_SHIFT,                          ...
+                 java.awt.event.KeyEvent.VK_D]);
             pause(0.5); % Allow layout to settle
         end
 
         function undockEditor()
             % UNDOCKEDITOR: Forces Editor focus then sends Ctrl+Shift+U
-            EditorManager.ensureEditorFocus();
-            EditorManager.sendRobotKeys([java.awt.event.KeyEvent.VK_CONTROL, ...
-                                         java.awt.event.KeyEvent.VK_SHIFT, ...
-                                         java.awt.event.KeyEvent.VK_U]);
+            EditorSessionCommander.ensureEditorFocus();
+            EditorSessionCommander.sendRobotKeys(                           ...
+                [java.awt.event.KeyEvent.VK_CONTROL,                        ...
+                 java.awt.event.KeyEvent.VK_SHIFT,                          ...
+                 java.awt.event.KeyEvent.VK_U]);
         end
 
         function ensureEditorFocus()
