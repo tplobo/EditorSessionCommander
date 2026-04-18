@@ -1,4 +1,5 @@
 [![DOI](https://zenodo.org/badge/1214466612.svg)](https://doi.org/10.5281/zenodo.19644945)
+[![View Editor Session Commander on File Exchange](https://www.mathworks.com/matlabcentral/images/matlab-file-exchange.svg)](https://ch.mathworks.com/matlabcentral/fileexchange/183700-editor-session-commander)
 
 # EditorSessionCommander
 
