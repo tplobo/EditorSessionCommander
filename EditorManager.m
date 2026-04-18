@@ -133,6 +133,8 @@ classdef EditorManager < handle
             if ~isempty(obj.hApp)
                 % --- MODERN HTML PATH --- %
                 layout = obj.hApp.DocumentLayout;
+
+                % Set Grid Dimensions on the Layout node
                 newLayoutNode.setAttribute(obj.tileW, num2str(layout.gridDimensions.w));
                 newLayoutNode.setAttribute(obj.tileH, num2str(layout.gridDimensions.h));
                 
@@ -140,46 +142,48 @@ classdef EditorManager < handle
                 colW = layout.columnWeights; 
                 rowW = layout.rowWeights;
 
+                % Iterate through Tiles defined in the modern Layout
                 for t = 1:numel(layout.tileOccupancy)
+                    % Find grid cells covered by this tile to calculate proportions
                     [rows, cols] = find(tc == t);
                     if isempty(rows), continue; end
                     
-                    % Grid Indices (Small integers: 0, 1, 2...)
-                    gX = min(cols) - 1;
-                    gY = min(rows) - 1;
-                    gW = max(cols) - min(cols) + 1;
-                    gH = max(rows) - min(rows) + 1;
-                    
-                    % Pseudo-Pixels (Proportions * 10000)
+                    % Calculate Pseudo-Pixels (Proportions * 10000)
+                    % This ensures legacy compatibility and cross-resolution stability.
+                    % pW/pH: Sum of weights for the columns/rows this tile spans.
+                    % pX/pY: Sum of weights for all columns/rows to the left/top of this tile.
                     pW = sum(colW(min(cols):max(cols))) * 10000;
                     pH = sum(rowW(min(rows):max(rows))) * 10000;
                     pX = sum(colW(1:(min(cols)-1))) * 10000;
                     pY = sum(rowW(1:(min(rows)-1))) * 10000;
 
-                    tileNumStr = num2str(t - 1);
+                    tileNumStr = num2str(t - 1); % 0-based index for XML
+                    
+                    % Create the Tile metadata node
                     newTileNode = obj.xmlDocument.createElement(obj.sessionTileNode);
                     newTileNode.setAttribute(obj.fileTile, tileNumStr);
                     
-                    % Save BOTH systems
+                    % Save using standard legacy-compatible attributes
                     newTileNode.setAttribute('x', num2str(round(pX)));
                     newTileNode.setAttribute('y', num2str(round(pY)));
                     newTileNode.setAttribute(obj.tileW, num2str(round(pW)));
                     newTileNode.setAttribute(obj.tileH, num2str(round(pH)));
                     
-                    newTileNode.setAttribute('gridX', num2str(gX));
-                    newTileNode.setAttribute('gridY', num2str(gY));
-                    newTileNode.setAttribute('gridW', num2str(gW));
-                    newTileNode.setAttribute('gridH', num2str(gH));
-                    
                     newLayoutNode.appendChild(newTileNode);
 
-                    % [Rest of File logic...]
-                    if iscell(layout.tileOccupancy), tileData = layout.tileOccupancy{t};
-                    else, tileData = layout.tileOccupancy(t); end
+                    % Handle file entries (children) for this specific tile
+                    if iscell(layout.tileOccupancy)
+                        tileData = layout.tileOccupancy{t};
+                    else
+                        tileData = layout.tileOccupancy(t);
+                    end
+
                     if ~isempty(tileData.children)
                         for c = 1:numel(tileData.children)
+                            % Extract file path from ID (editorFile_C:/path/to/file.m)
                             childID = tileData.children(c).id;
                             filePath = strrep(childID, 'editorFile_', '');
+
                             newFileNode = obj.xmlDocument.createElement(obj.sessionFileNode);
                             newFileNode.setAttribute(obj.fileName, filePath);
                             newFileNode.setAttribute(obj.fileTile, tileNumStr);
