@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/1214466612.svg)](https://doi.org/10.5281/zenodo.19644945)
+
 # EditorSessionCommander
 
 **EditorSessionCommander** is a lightweight tool for saving and restoring
