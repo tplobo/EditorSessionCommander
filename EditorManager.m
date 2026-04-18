@@ -33,6 +33,8 @@ classdef EditorManager < handle
         gridWidth  = 'gridW'; % Number of columns
         gridHeight = 'gridH'; % Number of rows
 
+        dispScale   = 10000;
+
         % These are mostly legacy now, but kept for old XMLs
         tileH = 'h'; 
         tileW = 'w';
@@ -131,54 +133,53 @@ classdef EditorManager < handle
             if ~isempty(obj.hApp)
                 % --- MODERN HTML PATH --- %
                 layout = obj.hApp.DocumentLayout;
-
-                % Set Grid Dimensions
                 newLayoutNode.setAttribute(obj.tileW, num2str(layout.gridDimensions.w));
                 newLayoutNode.setAttribute(obj.tileH, num2str(layout.gridDimensions.h));
                 
-                % To reconstruct complex layouts, we must save X, Y, W, H for each tile
-                % We derive these from the tileCoverage matrix
                 tc = layout.tileCoverage;
+                colW = layout.columnWeights; 
+                rowW = layout.rowWeights;
 
                 for t = 1:numel(layout.tileOccupancy)
-                    % 1. Find all cells in the grid belonging to this tile index
                     [rows, cols] = find(tc == t);
+                    if isempty(rows), continue; end
                     
-                    if isempty(rows)
-                        continue; % Skip empty tiles if any
-                    end
+                    % Grid Indices (Small integers: 0, 1, 2...)
+                    gX = min(cols) - 1;
+                    gY = min(rows) - 1;
+                    gW = max(cols) - min(cols) + 1;
+                    gH = max(rows) - min(rows) + 1;
                     
-                    % Calculate geometry (0-based for XML)
-                    tileX = min(cols) - 1;
-                    tileY = min(rows) - 1;
-                    tileW = max(cols) - min(cols) + 1;
-                    tileH = max(rows) - min(rows) + 1;
-                    
-                    tileNumStr = num2str(t - 1); % 0-based for XML
+                    % Pseudo-Pixels (Proportions * 10000)
+                    pW = sum(colW(min(cols):max(cols))) * 10000;
+                    pH = sum(rowW(min(rows):max(rows))) * 10000;
+                    pX = sum(colW(1:(min(cols)-1))) * 10000;
+                    pY = sum(rowW(1:(min(rows)-1))) * 10000;
 
-                    % Create the Tile metadata node with REAL geometry
+                    tileNumStr = num2str(t - 1);
                     newTileNode = obj.xmlDocument.createElement(obj.sessionTileNode);
                     newTileNode.setAttribute(obj.fileTile, tileNumStr);
-                    newTileNode.setAttribute('x', num2str(tileX));
-                    newTileNode.setAttribute('y', num2str(tileY));
-                    newTileNode.setAttribute(obj.tileW, num2str(tileW));
-                    newTileNode.setAttribute(obj.tileH, num2str(tileH));
+                    
+                    % Save BOTH systems
+                    newTileNode.setAttribute('x', num2str(round(pX)));
+                    newTileNode.setAttribute('y', num2str(round(pY)));
+                    newTileNode.setAttribute(obj.tileW, num2str(round(pW)));
+                    newTileNode.setAttribute(obj.tileH, num2str(round(pH)));
+                    
+                    newTileNode.setAttribute('gridX', num2str(gX));
+                    newTileNode.setAttribute('gridY', num2str(gY));
+                    newTileNode.setAttribute('gridW', num2str(gW));
+                    newTileNode.setAttribute('gridH', num2str(gH));
+                    
                     newLayoutNode.appendChild(newTileNode);
 
-                    % 2. Handle Files (Children)
-                    if iscell(layout.tileOccupancy)
-                        tileData = layout.tileOccupancy{t};
-                    else
-                        tileData = layout.tileOccupancy(t);
-                    end
-
+                    % [Rest of File logic...]
+                    if iscell(layout.tileOccupancy), tileData = layout.tileOccupancy{t};
+                    else, tileData = layout.tileOccupancy(t); end
                     if ~isempty(tileData.children)
                         for c = 1:numel(tileData.children)
                             childID = tileData.children(c).id;
-
-                            % Strip prefix to get path
                             filePath = strrep(childID, 'editorFile_', '');
-
                             newFileNode = obj.xmlDocument.createElement(obj.sessionFileNode);
                             newFileNode.setAttribute(obj.fileName, filePath);
                             newFileNode.setAttribute(obj.fileTile, tileNumStr);
@@ -320,52 +321,70 @@ classdef EditorManager < handle
         end
 
         function [layoutNode, layoutWH, tileTable] = getLayout(obj, session)
-            % GETLAYOUT Extracts the grid dimensions and tile metadata
+            % GETLAYOUT Extracts grid dimensions and detailed tile metadata (Pixels + Grid)
             layoutNodeList = session.getElementsByTagName(obj.sessionLayoutNode);
             L = layoutNodeList.getLength;
-
+            
             if L == 0
                 layoutNode = []; layoutWH = []; tileTable = [];
                 return;
             elseif L > 1
                 warning('Multiple layouts found in session XML; using the first one.');
             end
-
+            
             layoutNode = layoutNodeList.item(0);
-
+            
             % Read Grid Dimensions (W = Columns, H = Rows)
             W = str2double(layoutNode.getAttribute(obj.tileW));
             H = str2double(layoutNode.getAttribute(obj.tileH));
             layoutWH = [W H];
-
+            
             tileNodes = layoutNode.getElementsByTagName(obj.sessionTileNode);
             numTiles = tileNodes.getLength;
-
+            
             % Initialize arrays for the tile table
+            % Standard x,y,w,h are for weights (pseudo-pixels)
+            % gx, gy, gw, gh are for the coverageMap matrix indices
             tile = zeros(numTiles, 1);
             x = zeros(numTiles, 1);
             y = zeros(numTiles, 1);
             w = zeros(numTiles, 1);
             h = zeros(numTiles, 1);
-
+            gx = zeros(numTiles, 1);
+            gy = zeros(numTiles, 1);
+            gw = zeros(numTiles, 1);
+            gh = zeros(numTiles, 1);
+            
             for i = 1:numTiles
                 tileNode = tileNodes.item(i-1);
                 tile(i) = str2double(tileNode.getAttribute(obj.fileTile));
-
-                % Use str2double and handle empty attributes (common in R2026a)
-                valX = str2double(tileNode.getAttribute(obj.tileX));
-                valY = str2double(tileNode.getAttribute(obj.tileY));
+                
+                % 1. Extract Weight Proportions (Pseudo-pixels)
+                valX = str2double(tileNode.getAttribute('x'));
+                valY = str2double(tileNode.getAttribute('y'));
                 valW = str2double(tileNode.getAttribute(obj.tileW));
                 valH = str2double(tileNode.getAttribute(obj.tileH));
-
-                % If NaN (missing in XML), default to 0 or 1
+                
                 if ~isnan(valX), x(i) = valX; end
                 if ~isnan(valY), y(i) = valY; end
                 if ~isnan(valW), w(i) = valW; end
                 if ~isnan(valH), h(i) = valH; end
+                
+                % 2. Extract Grid-based Mapping (New attributes from modern appendSession)
+                % If these don't exist (older XML), we default to 0/1 logic
+                vGX = str2double(tileNode.getAttribute('gridX'));
+                vGY = str2double(tileNode.getAttribute('gridY'));
+                vGW = str2double(tileNode.getAttribute('gridW'));
+                vGH = str2double(tileNode.getAttribute('gridH'));
+                
+                if ~isnan(vGX), gx(i) = vGX; else, gx(i) = x(i); end
+                if ~isnan(vGY), gy(i) = vGY; else, gy(i) = y(i); end
+                if ~isnan(vGW), gw(i) = vGW; else, gw(i) = 1;    end
+                if ~isnan(vGH), gh(i) = vGH; else, gh(i) = 1;    end
             end
-
-            tileTable = table(tile, x, y, w, h);
+            
+            % Construct the table with both coordinate systems
+            tileTable = table(tile, x, y, w, h, gx, gy, gw, gh);
             tileTable = sortrows(tileTable, 'tile');
         end
 
@@ -1019,54 +1038,73 @@ classdef EditorManager < handle
 
                 % 2. RECONSTRUCT GEOMETRY
                 [~, layoutWH, tileTable] = obj.getLayout(sessions.item(indexFound-1));
-                
+                tileTable = sortrows(tileTable, 'tile');
+
                 newLayout = struct();
                 newLayout.gridDimensions.w = layoutWH(1);
                 newLayout.gridDimensions.h = layoutWH(2);
                 newLayout.tileCount = height(tileTable);
                 
+                rows = zeros(1, layoutWH(2));
+                cols = zeros(1, layoutWH(1));
                 coverageMap = zeros(layoutWH(2), layoutWH(1)); 
 
                 for i = 1:height(tileTable)
-                    % Use the attributes we just saved in appendSession
-                    x = tileTable.x(i); 
-                    y = tileTable.y(i);
-                    w = tileTable.w(i);
-                    h = tileTable.h(i);
+                    % Determine Grid Indices
+                    % If gridX is > gridDimensions.w, it's a "pixel" value, not an index.
+                    % We check for this to prevent the exploding matrix.
+                    if ismember('gx', tileTable.Properties.VariableNames) && ...
+                       all(tileTable.gx < layoutWH(1)) && all(tileTable.gy < layoutWH(2))
+                        gx = tileTable.gx(i); gy = tileTable.gy(i);
+                        gw = tileTable.gw(i); gh = tileTable.gh(i);
+                    else
+                        % INFERENCE: Find the first 0 in row-major scan
+                        [emptyCol, emptyRow] = find(coverageMap' == 0, 1, 'first');
+                        gx = emptyCol - 1; gy = emptyRow - 1;
+                        % Guess spans based on weights if needed, or default to 1
+                        gw = 1; gh = 1; 
+                        if layoutWH(1) > 1 && tileTable.w(i) > 7000, gw = layoutWH(1); end
+                    end
                     
-                    % Fill the map based on XML geometry
-                    rStart = y + 1;
-                    rEnd   = y + h;
-                    cStart = x + 1;
-                    cEnd   = x + w;
-                    
-                    % Map the matrix index 'i' (corresponds to XML tile + 1)
+                    % Fill Coverage Map (Must be indices!)
+                    rStart = gy + 1; rEnd = gy + gh;
+                    cStart = gx + 1; cEnd = gx + gw;
                     coverageMap(rStart:rEnd, cStart:cEnd) = i;
-                end
-                newLayout.tileCoverage = coverageMap;
-                display(coverageMap);
 
-                % Build the tileOccupancy Array
-                % We map files to the correct tile index based on the XML ID
+                    % Reconstruct Weights
+                    rows(gy + 1) = tileTable.h(i) / gh;
+                    cols(gx + 1) = tileTable.w(i) / gw;
+                end
+                rowWeights = rows / sum(rows);
+                columnWeights = cols / sum(cols);
+
+                newLayout.rowWeights = rowWeights;
+                newLayout.columnWeights = columnWeights;
+                newLayout.tileCoverage = coverageMap;
+
+                % 3. BUILD OCCUPANCY
                 occ = repmat(struct('children', []), 1, newLayout.tileCount);
                 for i = 1:newLayout.tileCount
                     origXMLID = tileTable.tile(i);
                     matchIdx = find(sessionTileStatus & (tiles == origXMLID));
-
                     kids = struct('id', {});
                     for j = 1:numel(matchIdx)
                         kids(j).id = "editorFile_" + string(tileFileCorrelation{matchIdx(j)});
                     end
                     occ(i).children = kids;
                 end
-                newLayout.tileOccupancy = occ';
+                occ = occ';
+                newLayout.tileOccupancy = occ;
+
+                % For debugging:
+                %
+                display(rowWeights);
+                display(columnWeights);
+                display(coverageMap);
                 display(occ);
+                %}
 
-                % Uniform Weights (The UI handles manual resizing after load)
-                newLayout.columnWeights = ones(1, layoutWH(1)) / layoutWH(1);
-                newLayout.rowWeights = ones(1, layoutWH(2)) / layoutWH(2);
-
-                % 3. THE DOUBLE-TAP: Atomic application with sync delay
+                % 4. THE DOUBLE-TAP: Atomic application with sync delay
                 try
 
                     % First Pass: Resets the Grid containers
