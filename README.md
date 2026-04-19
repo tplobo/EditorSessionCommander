@@ -3,6 +3,8 @@
 
 # EditorSessionCommander
 
+![EditorSessionCommander Logo](logo.png)
+
 **EditorSessionCommander** is a lightweight tool for saving and restoring
 MATLAB Editor sessions. It serves as the spiritual successor to
 [EditorSessionManager](https://ch.mathworks.com/matlabcentral/fileexchange/46352-editor-session-manager),
