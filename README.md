@@ -6,13 +6,14 @@
 **EditorSessionCommander** is a lightweight tool for saving and restoring
 MATLAB Editor sessions. It serves as the spiritual successor to
 [EditorSessionManager](https://ch.mathworks.com/matlabcentral/fileexchange/46352-editor-session-manager),
-rebuilt from the ground up to support the modern Chromium-based desktop
-while maintaining full backward compatibility with the legacy
+based on that package but re-built to support the modern Chromium-based
+desktop while maintaining full backward compatibility with the legacy
 Java-based UI.
 
 ---
 
 ## Key Features
+
 * **Modern UI Support:**
 Seamlessly handles the new HTML5 layout engine and `tileCoverage` grid
 logic.
@@ -37,22 +38,39 @@ esc.saveSession('MyProject');
 esc.openSession('MyProject');
 ```
 
-### 2. Wrapper (Recommended)
+### 2. Wrapper (Recommended for Projects)
 A wrapper script is provided for quick execution. This is ideal for
 start-up/shut-down routines of MATLAB projects:
 ```matlab
 % Call from your project startup script
 call_EditorSessionCommander('MyProject', 'load');
-
 % Call before closing MATLAB
 call_EditorSessionCommander('MyProject', 'save');
 ```
 
 ### 3. Custom Preferences Directory
 By default, sessions are saved in `prefdir`. To use a custom location
-(e.g., a cloud-synced folder or a project subfolder), use the included
+(_e.g._, a cloud-synced folder or a project subfolder), use the included
 custom `prefdir` function. It is called by the wrapper to override the
 default path as an example.
+
+---
+
+## Compatibility & Requirements
+EditorSessionCommander is designed to bridge several eras of the MATLAB
+desktop. Compatibility depends on your specific release:
+
+| Release Range | Desktop Engine | Status |
+| :--- | :--- | :--- |
+| **<= R2021a**         | Classic Desktop   | **Supported** (Legacy algorithm)       |
+| **R2021b - R2022b**   | Classic Desktop   | **Unsupported** (Future work required) |
+| **R2023a - R2024b**   | Classic Desktop   | **Unsupported** (Future work required) |
+| **R2023a - R2024b**   | New Desktop (Beta)| **Supported** (Modern algorithm)       |
+| **>= R2025a**         | New Desktop       | **Supported** (Modern algorithm)       |
+
+> **Note:** In R2023a-R2024b, the "New Desktop" (Beta) must be active to
+> use modern grid features. I have not identified how to patch the legacy
+> algorithm to make it work past R2021a.
 
 ---
 
@@ -63,6 +81,7 @@ default path as an example.
 * **User Path:**
 Run the included `install_in_user_path.m` to add the package to your static
 MATLAB path.
+
 * **Shortcuts:**
 Run `create_shortcuts.m` to add "Save" and "Load" buttons to your MATLAB
 toolstrip.
@@ -70,7 +89,6 @@ toolstrip.
 ---
 
 ## Layout Limitations: Legacy vs. Modern
-
 The legacy Java Editor allowed for "free-form" tiling where adjacent tiles
 could have independent boundaries. The modern HTML5 Editor uses a
 *strict grid*.
@@ -80,13 +98,12 @@ Adjacent tiles could have different widths:
 ```text
 +-----------------------+
 |        Tile 1         |
-+------------+----------+
-|  Tile 2    |   Tile 3 |
-+---------+--+----------+
-|  Tile 4 |    Tile 5   |
++-------------+---------+
+|    Tile 2   |  Tile 3 |
++---------+---+---------+
+| Tile 4  |    Tile 5   |
 +---------+-------------+
 ```
-
 ### Modern (Strict Grid)
 Tiles must align with the global column/row breakpoints:
 ```text
@@ -98,11 +115,6 @@ Tiles must align with the global column/row breakpoints:
 |  Tile 4   |  Tile 5   |
 +-----------+-----------+
 ```
+
 *EditorSessionCommander handles this by automatically calculating the
 closest grid fit when loading legacy layouts.*
-
----
-
-## Requirements
-* MATLAB R2018a or newer (Optimized for R2021b - R2026a).
-* No external toolboxes required.
