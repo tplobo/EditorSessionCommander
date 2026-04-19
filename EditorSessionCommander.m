@@ -6,6 +6,7 @@ classdef EditorSessionCommander < handle
         xmlDocument
         xmlFileName
         hApp
+        isNewUI
     end
 
     properties (Constant = true)
@@ -40,14 +41,30 @@ classdef EditorSessionCommander < handle
         fileSelectionOrder = 'order';
     end
 
+    properties (Constant, Hidden)
+        % Get release string (e.g., 'R2026a'). Default to old if command missing.
+        REL = subsref(matlabRelease, substruct('.', 'Release'))
+        
+        % ERA 1: <= R2021a (LEGACY path)
+        IS_LEGACY = (EditorSessionCommander.REL <= "R2021a")
+        
+        % ERA 2: The "Dead Zone" (R2021b - R2022b, requires patch)
+        IS_DEAD   = (EditorSessionCommander.REL >= "R2021b" && EditorSessionCommander.REL <= "R2022b")
+        
+        % ERA 3: The Transition (R2023a - R2024b, works on New Desktop)
+        IS_TRANS  = (EditorSessionCommander.REL >= "R2023a" && EditorSessionCommander.REL <= "R2024b")
+        
+        % ERA 4: >= R2025a+ (MODERN path)
+        IS_MODERN = (EditorSessionCommander.REL >= "R2025a")
+    end
+
     methods
 
         function obj = EditorSessionCommander()
             % Constructor: Initialize XML and ensure Editor is Docked for R2026a
             
+            % XML Initialization
             obj.xmlFileName = fullfile(prefdir, obj.sessionsXMLshort);
-            
-            % 1. XML Initialization
             if exist(obj.xmlFileName, 'file')
                 try
                     obj.xmlDocument = xmlread(obj.xmlFileName);
@@ -60,15 +77,28 @@ classdef EditorSessionCommander < handle
             else
                 obj.xmlDocument = com.mathworks.xml.XMLUtils.createDocument(obj.rootElement);
             end
-            
-            % 2. Hook into the R2026a Engine
-            try
-                % Dock the Editor if it is currently floating to ensure
-                % DocumentLayout of RootApp captures the files.
+
+            % Hook into UI engine
+            [isNewUI, app] = obj.isNewDesktop();
+            if isNewUI
+                % Dock the Editor if it is currently floating
                 obj.dockEditor(); 
-                obj.hApp = matlab.ui.container.internal.RootApp.getInstance();
-            catch
-                obj.hApp = [];
+
+                % Refresh app instance after docking to ensure sync
+                app = matlab.ui.container.internal.RootApp.getInstance();
+            end
+            obj.hApp = app;
+            obj.isNewUI = isNewUI;
+
+            % Issue Warnings/Errors based on Eras
+            if obj.IS_DEAD
+                warning('ESC:DeadZone',                                     ...
+                    'R2021b-R2022b are currently unsupported. Layout restoration may fail.');
+
+            elseif obj.IS_TRANS && ~isNewUI
+                warning('ESC:NewDesktopRequired', ...
+                    ['You are in R2023a-R2024b but the New Desktop (Beta) is not active. ', ...
+                    'Please switch to the New Desktop to use Modern features.']);
             end
             
             % Helper to clean XML
@@ -122,7 +152,7 @@ classdef EditorSessionCommander < handle
             newLayoutNode = obj.xmlDocument.createElement(obj.sessionLayoutNode);
             newSessionNode.appendChild(newLayoutNode);
             
-            if ~isempty(obj.hApp)
+            if obj.isNewUI
                 % --- MODERN HTML PATH --- %
                 layout = obj.hApp.DocumentLayout;
 
@@ -317,6 +347,26 @@ classdef EditorSessionCommander < handle
             T = table(index, name, numFiles, currentFolder, addPaths, lastUsed, lastSaved);
         end
 
+        function moveAllTiledViewsTo0(~, editorGroupMembers, jDesktop)
+            % MOVEALLTILEVIEWS TO0 (Legacy Only)
+            % Prevents Java Desktop from closing files during grid transitions 
+            % by consolidating all editor tabs into the first tile (Index 0).
+            
+            for gMember = 1:length(editorGroupMembers)
+                view = editorGroupMembers(gMember);
+                location = jDesktop.getClientLocation(view);
+                if ~isempty(location)
+                    % Note: .getTile is a Java method on DTLocation
+                    tNum = location.getTile;
+                    if ~isempty(tNum) && tNum > 0
+                        % Move to tile index 0
+                        jDesktop.setClientLocation(view, ...
+                            com.mathworks.widgets.desk.DTLocation.create(0));
+                    end
+                end
+            end
+        end
+
         function [layoutNode, layoutWH, tileTable] = getLayout(obj, session)
             layoutNodeList = session.getElementsByTagName(obj.sessionLayoutNode);
             if layoutNodeList.getLength == 0
@@ -376,14 +426,29 @@ classdef EditorSessionCommander < handle
 
     methods (Static = true)
 
+        function [tf, app] = isNewDesktop()
+            % ISNEWDESKTOP Robust check for the Modern HTML5 Desktop engine
+            % tf: true if the UI supports DocumentLayout logic
+            % app: returns the RootApp instance for immediate use
+            tf = false;
+            app = [];
+            try
+                app = matlab.ui.container.internal.RootApp.getInstance();
+                % In Modern UI, DocumentLayout is a struct with fields.
+                % In Legacy/Dead Zone, it is typically a 1x1 struct with no fields.
+                if ~isempty(app) && ~isempty(fieldnames(app.DocumentLayout))
+                    tf = true;
+                end
+            catch
+                % Fail-safe for older versions where RootApp doesn't exist
+            end
+        end
+
         function [fileNames, fileViewClients] = getOpenEditorFiles()
             % GETOPENEDITORFILES Retrieves paths of all open files in the Editor.
             % Works for both legacy Java and modern HTML (R2026a) environments.
 
-            % Check if we are in the modern environment by checking for RootApp
-            isModern = ~isempty(matlab.ui.container.internal.RootApp.getInstance());
-
-            if isModern
+            if EditorSessionCommander.isNewDesktop()
                 % --- MODERN HTML PATH --- %
                 allDocs = matlab.desktop.editor.getAll;
                 fileNames = {allDocs.Filename}';
@@ -424,10 +489,7 @@ classdef EditorSessionCommander < handle
             % GETOPENCLIENTBYFILENAME Finds the UI handle/client for a specific file.
             % In R2026a, returns an AppContainerDocument. In Java, returns a ViewClient.
 
-            % 1. Modern R2026a Path
-            isModern = ~isempty(matlab.ui.container.internal.RootApp.getInstance());
-
-            if isModern
+            if EditorSessionCommander.isNewDesktop()
                 % --- MODERN HTML PATH --- %
                 % Find the document in the modern editor API
                 allDocs = matlab.desktop.editor.getAll;
@@ -483,11 +545,13 @@ classdef EditorSessionCommander < handle
             end
             if nargin < 4, externalDimsXYWH = []; end
 
-            % --- MODERN HTML PATH --- %
-            hApp = matlab.ui.container.internal.RootApp.getInstance();
-            if ~isempty(hApp)
+            [isNewUI,app] = EditorSessionCommander.isNewDesktop();
+
+            if isNewUI
+                % --- MODERN HTML PATH --- %
+
                 % Grab the current layout state
-                L = hApp.DocumentLayout;
+                L = app.DocumentLayout;
                 targetID = "editorFile_" + string(fileName);
 
                 % Remove document from any existing tile first to avoid duplicates
@@ -522,7 +586,7 @@ classdef EditorSessionCommander < handle
                 end
 
                 % Push the updated layout back to the engine
-                hApp.DocumentLayout = L;
+                app.DocumentLayout = L;
 
             else
                 % --- LEGACY JAVA PATH --- %
@@ -621,63 +685,65 @@ classdef EditorSessionCommander < handle
             % ----------------------------------------------------------- %
             % Block 2: Layout Requirements & Cleanup
             % ----------------------------------------------------------- %
-
             % Calculate Tile Requirements
             numFilesCount = T.numFiles{indexFound};
             maxTiles = -1;
             tiles = zeros(numFilesCount, 1);
-
-            % We iterate through the XML file nodes to see how many tiles were used
+            
             for i = 1:numFilesCount
                 fileNode = files{indexFound}.item(i-1);
                 tileAttr = char(fileNode.getAttribute(obj.fileTile));
-
                 if isempty(tileAttr)
-                    tileVal = 0; % Default to first tile
+                    tileVal = 0; 
                 else
                     tileVal = str2double(tileAttr);
                 end
-
                 if tileVal > maxTiles
                     maxTiles = tileVal;
                 end
                 tiles(i) = tileVal;
             end
-
+            
             numTilesNeeded = maxTiles + 1;
-
-            % Cleanup
-            % In the old version, this cleared "Invalid" Java views.
-            % In R2026a, we ensure the RootApp is ready.
-
-            if isempty(obj.hApp)
+            tileCloseSensitive = (numTilesNeeded == 2);
+            
+            % Cleanup & Validation
+            if ~obj.isNewUI
                 % --- LEGACY JAVA PATH --- %
                 jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 editorGroupMembers = jDesktop.getGroupMembers('Editor');
+                
+                % 1. Validate Invalid Views
                 nInvalid = 0;
-
                 for i = 1:length(editorGroupMembers)
                     clientView = editorGroupMembers(i);
                     if ~clientView.isValid
                         nInvalid = nInvalid + 1;
                         try
-                            % Try to force re-render/validation by moving to Tile 0
                             jDesktop.setClientLocation(clientView, ...
                                 com.mathworks.widgets.desk.DTLocation.create(0));
                         catch
                         end
                     end
                 end
-
+                
                 if nInvalid > 0
-                    fprintf('Legacy: Found %d invalid Java views. Attempted validation.\n', nInvalid);
+                    fprintf('Legacy: %d invalid views found. Attempted validation.\n', nInvalid);
+                end
+
+                % 2. Safety Move (Crucial for spanning/re-arranging)
+                % This uses the flag to decide whether to move views to Tile 0 
+                % to prevent the Desktop from "eating" files during the transition.
+                if ~tileCloseSensitive
+                    % We call it via the object since it should be a class method
+                    obj.moveAllTiledViewsTo0(editorGroupMembers, jDesktop);
                 end
             else
                 % --- MODERN HTML PATH --- %
-                % The AppContainer handles tab health automatically. 
-                % We can verify the DocumentLayout exists.
+                % The Chromium/AppContainer engine does not suffer from the 
+                % Java "Tile 0" file-eating bug, so tileCloseSensitive is not used here.
                 if isempty(obj.hApp.DocumentLayout)
-                    % Initialize a basic grid if for some reason the layout is null
+                    initLayout = struct();
                     initLayout.gridDimensions.w = 1;
                     initLayout.gridDimensions.h = 1;
                     initLayout.tileCount = 1;
@@ -689,125 +755,174 @@ classdef EditorSessionCommander < handle
             % ----------------------------------------------------------- %
             % Block 3: Layout Reconstruction (Grid & Spans)
             % ----------------------------------------------------------- %
-
             [layoutNode, layoutWH, tileTable] = obj.getLayout(sessionNode);
             if isempty(layoutNode)
                 error('Session saved in improper XML format: no layout info');
             end
+            
+            numTiles = height(tileTable);
 
-            if ~isempty(obj.hApp)
+            if obj.isNewUI
                 % --- MODERN HTML PATH --- %
-                % We prepare the struct. We don't apply it yet—we wait until 
-                % the files are actually opened in Block 4.
-
+                % We prepare the struct for the AppContainer. We don't apply it yet—
+                % we wait until the files are actually opened in Block 4/5.
                 W = layoutWH(1);
                 H = layoutWH(2);
-
+                
                 % Initialize the modern Layout struct
                 modernL = struct;
                 modernL.gridDimensions.w = W;
                 modernL.gridDimensions.h = H;
-                modernL.tileCount = height(tileTable);
-
-                % In R2026a, weights are used for proportions. 
-                % For now, we assume equal spacing (0.5, 0.5 etc)
-                modernL.columnWeights = repmat(1/W, 1, W);
-                modernL.rowWeights = repmat(1/H, 1, H);
-
+                modernL.tileCount = numTiles;
+                
+                % Calculate weights based on actual XML proportions
+                uniqueX = sort(unique(tileTable.x));
+                uniqueY = sort(unique(tileTable.y));
+                allEdgesX = sort(unique([tileTable.x; tileTable.x + tileTable.w]));
+                allEdgesY = sort(unique([tileTable.y; tileTable.y + tileTable.h]));
+                
+                modernL.columnWeights = diff(allEdgesX) / sum(diff(allEdgesX));
+                modernL.rowWeights = diff(allEdgesY) / sum(diff(allEdgesY));
+                
                 % Reconstruct tileCoverage matrix (The "Span" logic)
-                % tileTable contains: tile, x, y, w, h
                 modernL.tileCoverage = zeros(H, W); 
-                for i = 1:height(tileTable)
-                    tIdx = tileTable.tile(i) + 1; % 1-based
-
-                    % Determine the grid coordinates from old x,y,w,h
-                    % This assumes x,y were stored as grid indices or relative offsets
-                    % If they were pixels, we'd need the 'xu/yu' unique logic here too.
-                    [~, ~, xui] = unique(tileTable.x);
-                    [~, ~, yui] = unique(tileTable.y);
-                    [~, ~, x2ui] = unique(tileTable.x + tileTable.w);
-                    [~, ~, y2ui] = unique(tileTable.y + tileTable.h);
-
-                    colStart = xui(i);
-                    colEnd   = x2ui(i) - 1;
-                    rowStart = yui(i);
-                    rowEnd   = y2ui(i) - 1;
-
-                    modernL.tileCoverage(rowStart:rowEnd, colStart:colEnd) = tIdx;
+                for i = 1:numTiles
+                    tIdx = tileTable.tile(i) + 1; % 1-based index for the matrix
+                    
+                    % Map pixel positions to grid indices
+                    gx = find(uniqueX == tileTable.x(i)) - 1;
+                    gy = find(uniqueY == tileTable.y(i)) - 1;
+                    gw = sum(allEdgesX < (tileTable.x(i) + tileTable.w(i))) - gx;
+                    gh = sum(allEdgesY < (tileTable.y(i) + tileTable.h(i))) - gy;
+                    
+                    rStart = gy + 1; rEnd = gy + gh;
+                    cStart = gx + 1; cEnd = gx + gw;
+                    modernL.tileCoverage(rStart:rEnd, cStart:cEnd) = tIdx;
                 end
-
-                % We store this in a temporary variable to apply after files open
+                
+                % Store this to apply after files are ready
                 pendingLayout = modernL;
-
+                
             else
                 % --- LEGACY JAVA PATH --- %
                 jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
-                if numTilesNeeded == 1
+                
+                if numTiles == 1
+                    % Don't mess with tiles if already in single window mode
                     if jDesktop.getDocumentArrangement('Editor') ~= 1
                         jDesktop.setDocumentArrangement('Editor', 2, java.awt.Dimension(1,1));
                     end
-                elseif numTilesNeeded > 0
+                elseif numTiles > 0
                     W = layoutWH(1);
                     H = layoutWH(2);
+                    NeedToReRearrangeLater = false;
+                    currentArrangmentType = jDesktop.getDocumentArrangement('Editor');
+                    
+                    if currentArrangmentType == 1 && W*H == 2
+                        NeedToReRearrangeLater = true;
+                    end
+                    
                     jDesktop.setDocumentArrangement('Editor', 2, java.awt.Dimension(W, H));
-
-                    % Re-arrange spans using Java methods
+                    
+                    if ~tileCloseSensitive
+                        obj.moveAllTiledViewsTo0(editorGroupMembers, jDesktop); % Avoid eating files
+                    end
+                    
                     tilesOnly = tileTable(tileTable.tile >= 0, :);
                     [xu, ~, xui] = unique(tilesOnly.x);
+                    c = (1:W)'; % Transpose for dimensional consistency
                     [yu, ~, yui] = unique(tilesOnly.y);
-                    [x2u, ~, x2ui] = unique(tilesOnly.x + tilesOnly.w);
-
-                    columns = xui - 1;
-                    rows = yui - 1;
-                    columnSpan = x2ui - columns;
-                    % ... (Keep your original Java span loop here for the legacy branch)
-                    % (I am omitting the full loop for brevity, but it stays in the 'else')
+                    r = (1:H)';
+                    [x2u, ~, x2ui] = unique(tilesOnly.x + tileTable.w(tileTable.tile >= 0));
+                    c2 = (1:W)';
+                    [y2u, ~, y2ui] = unique(tilesOnly.y + tileTable.h(tileTable.tile >= 0));
+                    r2 = (1:H)';
+                    
+                    if length(xu) ~= W || length(yu) ~= H || length(x2u) ~= W || length(y2u) ~= H || numTiles ~= height(tilesOnly)
+                        error('Inconsistent start/end values and number of rows/columns');
+                    end
+                    
+                    columns = c(xui) - 1;
+                    rows = r(yui) - 1;
+                    columnSpan = c2(x2ui) - columns;
+                    rowSpan = r2(y2ui) - rows;
+                    
+                    for i = 1:numTiles
+                        if rowSpan(i) == 1 && columnSpan(i) == 1
+                            % Do nothing
+                        elseif rowSpan(i) == 1
+                            jDesktop.setDocumentColumnSpan('Editor', rows(i), columns(i), columnSpan(i));
+                        elseif columnSpan(i) == 1
+                            jDesktop.setDocumentRowSpan('Editor', rows(i), columns(i), rowSpan(i));
+                        else
+                            for j = 0:rowSpan(i)-1
+                                jDesktop.setDocumentColumnSpan('Editor', rows(i)+j, columns(i), columnSpan(i));
+                            end
+                            jDesktop.setDocumentRowSpan('Editor', rows(i), columns(i), rowSpan(i));
+                        end
+                    end
                 end
             end
 
             % ----------------------------------------------------------- %
             % Block 4: Tile Stabilization (Marker Files)
             % ----------------------------------------------------------- %
-
-            if isempty(obj.hApp)
+            if ~obj.isNewUI
                 % --- LEGACY JAVA PATH --- %
-                % This logic ensures Java doesn't collapse the grid.
-
-                % Use the new class name for the 'what' call
-                whatPkg = what('+EditorSessionCommander');
-                if isempty(whatPkg)
-                    % Fallback if package structure isn't detected
-                    packagePath = fileparts(mfilename('fullpath'));
+                % Ensure marker files exist to prevent grid collapse
+                testFile = cell(numTiles, 1);
+                
+                % Locate the marker file package directory
+                whatEditorLayout = what('+EditorSessionCommander');
+                if isempty(whatEditorLayout)
+                    % Fallback to current folder if package not on path
+                    editorLayoutPath = pwd;
                 else
-                    packagePath = whatPkg(1).path;
+                    editorLayoutPath = whatEditorLayout(1).path;
                 end
-
-                testFile = cell(numTilesNeeded, 1);
-
-                % We keep the marker file logic for Java
+                
                 if exist('NeedToReRearrangeLater', 'var') && NeedToReRearrangeLater
-                    % (Omitting full loop for brevity, but it remains here for legacy)
-                    % Essentially, you create tileX_.m files and move them to Tile 0
-                end
-
-                % Standard marker file loop for Java
-                for i = 1:numTilesNeeded
-                    testFile{i} = fullfile(packagePath, ['tile' num2str(i-1) '.m']);
-                    % Create the marker file
-                    fid = fopen(testFile{i}, 'w');
-                    if fid ~= -1
-                        fclose(fid);
-                        % Use the editor API to open it
-                        matlab.desktop.editor.openDocument(testFile{i});
-                        % Set the tile using our version-aware setTile
+                    testFile_ = cell(numTiles, 1);
+                    for i = 1:numTiles
+                        testFile_{i} = fullfile(editorLayoutPath, ['tile' num2str(i-1) '_.m']);
+                        t1 = tic;
+                        id = fopen(testFile_{i}, 'w');
+                        while toc(t1) < 1 && ~exist(testFile_{i}, 'file')
+                        end
+                        fclose(id);
+                        edit(testFile_{i});
+                        obj.setTile(testFile_{i}, 0, jDesktop);
+                    end
+                    
+                    jDesktop.setDocumentArrangement('Editor', 2, java.awt.Dimension(W, H));
+                    
+                    for i = 1:numTiles
+                        testFile{i} = fullfile(editorLayoutPath, ['tile' num2str(i-1) '.m']);
+                        t1 = tic;
+                        id = fopen(testFile{i}, 'w');
+                        while toc(t1) < 1 && ~exist(testFile{i}, 'file')
+                        end
+                        fclose(id);
+                        edit(testFile{i});
+                        obj.setTile(testFile{i}, i-1, jDesktop);
+                    end
+                else
+                    for i = 1:numTiles
+                        testFile{i} = fullfile(editorLayoutPath, ['tile' num2str(i-1) '.m']);
+                        t1 = tic;
+                        id = fopen(testFile{i}, 'w');
+                        while toc(t1) < 1 && ~exist(testFile{i}, 'file')
+                        end
+                        fclose(id);
+                        edit(testFile{i});
                         obj.setTile(testFile{i}, i-1, jDesktop);
                     end
                 end
             else
                 % --- MODERN HTML PATH --- %
-                % We do nothing here! 
-                % We don't need marker files because we have 'pendingLayout'.
-                % The AppContainer will maintain the grid structure automatically.
+                % Modern UI handles grid structure via the AppContainer logic.
+                % Marker files are unnecessary here as we will apply 'pendingLayout'
+                % once the actual session files are opened.
                 testFile = {}; 
             end
 
@@ -928,7 +1043,7 @@ classdef EditorSessionCommander < handle
             % Block 6: Tile Correlation & Coordinate Mapping
             % ----------------------------------------------------------- %
 
-            if ~isempty(obj.hApp)
+            if obj.isNewUI
                 % --- MODERN HTML PATH --- %
                 % In the new system, we don't need to "test" where tiles are.
                 % The tile IDs we set in pendingLayout.tileCoverage are absolute.
@@ -1013,7 +1128,7 @@ classdef EditorSessionCommander < handle
             % Block 7: Final Move, Closing Unwanted Files, and Cleanup
             % ----------------------------------------------------------- %
 
-            if ~isempty(obj.hApp)
+            if obj.isNewUI
                 % --- MODERN HTML PATH --- %
 
                 % 1. STRICT CLEANUP: Close any files NOT in this session
