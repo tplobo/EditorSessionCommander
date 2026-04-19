@@ -2,7 +2,7 @@
 # Visit https://bit.ly/cffinit to generate yours today!
 
 cff-version: 1.2.0
-title: 'tplobo/EditorSessionCommander: v1.0.1'
+title: 'tplobo/EditorSessionCommander'
 message: 'If you use this software, please cite it as below.'
 type: software
 authors:
