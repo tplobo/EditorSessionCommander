@@ -83,7 +83,7 @@ function access_Session(name, mode)
     % in your userpath, you might not even need the addpath/rmpath logic here.
     path_ESM = fullfile('FILE_EXCHANGE', 'EditorSessionCommander');
     if exist(path_ESM, 'dir')
-        addpath(genpath(path_ESM));
+        addpath(path_ESM);
     end
 
     switch lower(mode)
@@ -116,6 +116,6 @@ function access_Session(name, mode)
     
     % Clean up path if it was added locally
     if exist(path_ESM, 'dir')
-        rmpath(genpath(path_ESM));
+        rmpath(path_ESM);
     end
 end
