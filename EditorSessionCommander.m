@@ -485,9 +485,12 @@ classdef EditorSessionCommander < handle
             end
         end
 
-        function client = getOpenClientByFileName(fileName, jDesktop)
+        function client = getOpenClientByFileName(fileName, jDesktop, timeout)
             % GETOPENCLIENTBYFILENAME Finds the UI handle/client for a specific file.
             % In R2026a, returns an AppContainerDocument. In Java, returns a ViewClient.
+            % Legacy only: 'timeout' (s, default 5) is how long to wait for a
+            % file that was just opened, since edit() registers its client
+            % asynchronously.
 
             if EditorSessionCommander.isNewDesktop()
                 % --- MODERN HTML PATH --- %
@@ -516,22 +519,75 @@ classdef EditorSessionCommander < handle
 
             else
                 % --- LEGACY JAVA PATH --- %
-                if nargin < 2
+                if nargin < 2 || isempty(jDesktop)
                     jDesktop = com.mathworks.mde.desk.MLDesktop.getInstance;
                 end
+                if nargin < 3 || isempty(timeout)
+                    timeout = 5;
+                end
 
-                client = jDesktop.getClient(fileName);
+                % Poll until the client registers: the title may carry an
+                % unsaved '*' or ' [Read Only]' suffix
+                suffixes = {'', '*', ' [Read Only]'};
+                client = [];
+                t0 = tic;
+                while isempty(client)
+                    for s = 1:numel(suffixes)
+                        client = jDesktop.getClient([fileName suffixes{s}]);
+                        if ~isempty(client), break; end
+                    end
+                    if ~isempty(client) || toc(t0) >= timeout, break; end
+                    pause(0.1);
+                end
+
                 if isempty(client)
-                    % Check for unsaved '*'
-                    client = jDesktop.getClient([fileName '*']);
-                    if isempty(client)
-                        % Check for ' [Read Only]'
-                        client = jDesktop.getClient([fileName ' [Read Only]']);
-                        if isempty(client)
-                            warning('EditorSessionCommander:ClientNotFound', 'Cannot retrieve client view for %s', fileName);
-                        end
+                    warning('EditorSessionCommander:ClientNotFound', 'Cannot retrieve client view for %s', fileName);
+                end
+            end
+        end
+
+        function tf = waitForGrid(jDesktop, W, H, timeout)
+            % WAITFORGRID (Legacy Only) Waits until the Editor tile grid is WxH.
+            % Returns false if the grid has not settled to WxH after 'timeout' s.
+            t0 = tic;
+            while true
+                dims = jDesktop.getDocumentTiledDimension('Editor');
+                tf = (dims.width == W && dims.height == H);
+                if tf || toc(t0) >= timeout, return; end
+                pause(0.1);
+            end
+        end
+
+        function openMarker(markerFile, tile, jDesktop)
+            % OPENMARKER (Legacy Only) Creates an empty marker file, opens it
+            % in the Editor and sends it to the requested tile.
+            fid = fopen(markerFile, 'w');
+            if fid == -1
+                error('EditorSessionCommander:MarkerFailed', ...
+                    'Could not create marker file %s', markerFile);
+            end
+            fclose(fid);
+            edit(markerFile);
+            EditorSessionCommander.setTile(markerFile, tile, jDesktop);
+        end
+
+        function removeMarkers(markerDir)
+            % REMOVEMARKERS (Legacy Only) Closes every marker tab (matched by
+            % file name, which is robust to symlinked temp paths) and deletes
+            % the temporary marker folder. Safe to call repeatedly.
+            if isempty(markerDir), return; end
+            try
+                allDocs = matlab.desktop.editor.getAll;
+                for d = 1:numel(allDocs)
+                    [~, n, e] = fileparts(allDocs(d).Filename);
+                    if ~isempty(regexp([n e], '^ESC_marker_tile\d+_?\.m$', 'once'))
+                        allDocs(d).closeNoPrompt();
                     end
                 end
+            catch
+            end
+            if exist(markerDir, 'dir')
+                try rmdir(markerDir, 's'); catch, end %#ok<NOCOM>
             end
         end
 
@@ -622,7 +678,11 @@ classdef EditorSessionCommander < handle
         function openSession(NameIn, TreatmentOfOpenFiles)
             % OPENSESSION Entry point for restoring an editor state.
             % NameIn: Name of the session to load.
-            % TreatmentOfOpenFiles: 'c' for close others, 'a' for append (logic usually follows in later blocks).
+            % TreatmentOfOpenFiles: 'c' (default) closes open files that are
+            % not part of the session, 'a' keeps them (Legacy Java path only;
+            % the modern path always closes them).
+
+            if nargin < 2 || isempty(TreatmentOfOpenFiles), TreatmentOfOpenFiles = 'c'; end
 
             % Initialize the class
             obj = EditorSessionCommander(); 
@@ -706,6 +766,11 @@ classdef EditorSessionCommander < handle
             
             numTilesNeeded = maxTiles + 1;
             tileCloseSensitive = (numTilesNeeded == 2);
+
+            % State shared between blocks (legacy marker handling)
+            NeedToReRearrangeLater = false;
+            testFile  = {};
+            markerDir = '';
             
             % Cleanup & Validation
             if ~obj.isNewUI
@@ -801,7 +866,7 @@ classdef EditorSessionCommander < handle
                 end
                 
                 % Store this to apply after files are ready
-                pendingLayout = modernL;
+                pendingLayout = modernL; %#ok<NASGU>
                 
             else
                 % --- LEGACY JAVA PATH --- %
@@ -869,53 +934,28 @@ classdef EditorSessionCommander < handle
             % ----------------------------------------------------------- %
             if ~obj.isNewUI
                 % --- LEGACY JAVA PATH --- %
-                % Ensure marker files exist to prevent grid collapse
-                testFile = cell(numTiles, 1);
-                
-                % Locate the marker file package directory
-                whatEditorLayout = what('+EditorSessionCommander');
-                if isempty(whatEditorLayout)
-                    % Fallback to current folder if package not on path
-                    editorLayoutPath = pwd;
-                else
-                    editorLayoutPath = whatEditorLayout(1).path;
-                end
-                
-                if exist('NeedToReRearrangeLater', 'var') && NeedToReRearrangeLater
-                    testFile_ = cell(numTiles, 1);
-                    for i = 1:numTiles
-                        testFile_{i} = fullfile(editorLayoutPath, ['tile' num2str(i-1) '_.m']);
-                        t1 = tic;
-                        id = fopen(testFile_{i}, 'w');
-                        while toc(t1) < 1 && ~exist(testFile_{i}, 'file')
+                % Marker files only matter when there is more than one tile.
+                % They live in a private temp folder (never in the project
+                % root/pwd), and an onCleanup guarantees tabs and files are
+                % removed even if loading fails halfway.
+                if numTiles > 1
+                    markerDir = tempname;
+                    mkdir(markerDir);
+                    cleanupMarkers = onCleanup(@() EditorSessionCommander.removeMarkers(markerDir)); %#ok<NASGU>
+
+                    if NeedToReRearrangeLater
+                        % Park markers in tile 0 while the grid is re-created
+                        for i = 1:numTiles
+                            EditorSessionCommander.openMarker(fullfile(markerDir, ...
+                                sprintf('ESC_marker_tile%d_.m', i-1)), 0, jDesktop);
                         end
-                        fclose(id);
-                        edit(testFile_{i});
-                        obj.setTile(testFile_{i}, 0, jDesktop);
+                        jDesktop.setDocumentArrangement('Editor', 2, java.awt.Dimension(W, H));
                     end
-                    
-                    jDesktop.setDocumentArrangement('Editor', 2, java.awt.Dimension(W, H));
-                    
+
+                    testFile = cell(numTiles, 1);
                     for i = 1:numTiles
-                        testFile{i} = fullfile(editorLayoutPath, ['tile' num2str(i-1) '.m']);
-                        t1 = tic;
-                        id = fopen(testFile{i}, 'w');
-                        while toc(t1) < 1 && ~exist(testFile{i}, 'file')
-                        end
-                        fclose(id);
-                        edit(testFile{i});
-                        obj.setTile(testFile{i}, i-1, jDesktop);
-                    end
-                else
-                    for i = 1:numTiles
-                        testFile{i} = fullfile(editorLayoutPath, ['tile' num2str(i-1) '.m']);
-                        t1 = tic;
-                        id = fopen(testFile{i}, 'w');
-                        while toc(t1) < 1 && ~exist(testFile{i}, 'file')
-                        end
-                        fclose(id);
-                        edit(testFile{i});
-                        obj.setTile(testFile{i}, i-1, jDesktop);
+                        testFile{i} = fullfile(markerDir, sprintf('ESC_marker_tile%d.m', i-1));
+                        EditorSessionCommander.openMarker(testFile{i}, i-1, jDesktop);
                     end
                 end
             else
@@ -1053,7 +1093,7 @@ classdef EditorSessionCommander < handle
             else
                 % --- LEGACY JAVA PATH --- %
                 % Maintain the original coordinate-checking logic for Java
-                if numTilesNeeded > 1
+                if numTilesNeeded > 1 && numel(testFile) >= numTilesNeeded
                     % Extract geometry from table
                     realTiles = tileTable.tile >= 0;
                     x = tileTable.x(realTiles);
@@ -1072,27 +1112,43 @@ classdef EditorSessionCommander < handle
                     ytest = zeros(numTilesNeeded, 1);
 
                     for i = 1:numTilesNeeded
-                        cont = true;
-                        % Ensure Java hasn't reset the grid
-                        currDim = jDesktop.getDocumentTiledDimension('Editor');
-                        if currDim.width ~= W || currDim.height ~= H
-                            error('EditorSessionCommander:LayoutError', 'Tile layout has been unset or corrupted.');
+                        % Ensure Java hasn't reset the grid (allow it to settle first)
+                        if ~EditorSessionCommander.waitForGrid(jDesktop, W, H, 2)
+                            currDim = jDesktop.getDocumentTiledDimension('Editor');
+                            error('EditorSessionCommander:LayoutError', ...
+                                ['Tile layout has been unset or corrupted: expected %dx%d, ', ...
+                                 'found %dx%d while locating marker %d.'], ...
+                                W, H, currDim.width, currDim.height, i);
                         end
 
                         % Wait for Java to catch up and report coordinates
+                        cont = true;
+                        t1 = tic;
                         while cont
-                            client = EditorSessionCommander.getOpenClientByFileName(testFile{i}, jDesktop);
-                            loc = jDesktop.getClientLocation(client);
-                            if isempty(loc), continue; end
+                            client = EditorSessionCommander.getOpenClientByFileName(testFile{i}, jDesktop, 1);
+                            loc = [];
+                            if ~isempty(client)
+                                loc = jDesktop.getClientLocation(client);
+                            end
 
-                            xtest(i) = loc.getFrameX();
-                            ytest(i) = loc.getFrameY();
+                            if ~isempty(loc)
+                                xtest(i) = loc.getFrameX();
+                                ytest(i) = loc.getFrameY();
 
-                            % Check if the file has actually moved to a distinct location
-                            if numTilesNeeded <= 1 || i == 1 || ...
-                                    (xtest(i) ~= xtest(1) && xtest(i) ~= xtest(i-1) && xtest(i) > 0) || ...
-                                    (ytest(i) ~= ytest(1) && ytest(i) ~= ytest(i-1) && ytest(i) > 0)
-                                cont = false;
+                                % Check if the file has actually moved to a distinct location
+                                if numTilesNeeded <= 1 || i == 1 || ...
+                                        (xtest(i) ~= xtest(1) && xtest(i) ~= xtest(i-1) && xtest(i) > 0) || ...
+                                        (ytest(i) ~= ytest(1) && ytest(i) ~= ytest(i-1) && ytest(i) > 0)
+                                    cont = false;
+                                end
+                            end
+
+                            if cont
+                                if toc(t1) > 10
+                                    error('EditorSessionCommander:CorrelationError', ...
+                                        'Timed out waiting for marker %d to settle in its tile.', i);
+                                end
+                                pause(0.1);
                             end
                         end
                     end
@@ -1229,37 +1285,31 @@ classdef EditorSessionCommander < handle
                             % Handle External/Floating Windows
                             moveToTile = tiles(i);
                             extIdx = (tileTable.tile == moveToTile);
-                            sessionEditor.setTile(tileFileCorrelation{i}, moveToTile, jDesktop, ...
+                            obj.setTile(tileFileCorrelation{i}, moveToTile, jDesktop, ...
                                 [tileTable.x(extIdx), tileTable.y(extIdx), ...
                                 tileTable.w(extIdx), tileTable.h(extIdx)]);
                         end
                     end
                 end
 
-                % Close marker files
-                if numTilesNeeded > 1
-                    for i = 1:numTilesNeeded
-                        jDesktop.closeClient(testFile{i});
-                        editorFileStatus = editorFileStatus | strcmp(testFile{i}, editorOpenFileNames);
-                    end
-                end
+                % Close marker tabs and delete their temporary folder
+                EditorSessionCommander.removeMarkers(markerDir);
 
-                % Close files not in session (Interactive logic)
-                if any(editorFileStatus == 0)
-                    % [Your original interactive loop for 'cki' remains here]
-                    % (Omitting loop for brevity, but keep it in your .m file)
+                % Close files not in session ('c' = close, 'a' = append/keep)
+                if strncmpi(TreatmentOfOpenFiles, 'c', 1)
+                    for k = find(~editorFileStatus(:))'
+                        try
+                            doc = matlab.desktop.editor.findOpenDocument(editorOpenFileNames{k});
+                            if ~isempty(doc), doc.close(); end
+                        catch
+                            % Untitled/unresolvable documents are left alone
+                        end
+                    end
                 end
             end
 
             % Final save of the XML to update timestamps
             obj.save();
-
-            % Physical Cleanup of marker files (Generic)
-            if ~isempty(testFile)
-                for i = 1:length(testFile)
-                    if exist(testFile{i}, 'file'), delete(testFile{i}); end
-                end
-            end
         end
 
         function saveSession(sessionName, addSubDirectoriesToPath)
@@ -1380,10 +1430,6 @@ classdef EditorSessionCommander < handle
             % chooseOption is your external helper function
             indexFound = chooseOption(T);
             if isempty(indexFound), return; end
-
-            % Internal helper to show what is about to be deleted
-            displaySessionToDelete = @() fprintf('\nTarget session(s):\n%s\n', ...
-                formattedTableString(T(indexFound,:)));
 
             % Using a simplified validation check
             fprintf('\nSelected for deletion:\n');
